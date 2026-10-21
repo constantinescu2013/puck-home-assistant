@@ -23,7 +23,7 @@ A round touch-screen remote for Home Assistant, built on ESPHome. It has a voice
 |---|---|
 | `esphome/` | Puck firmware (`puck-telecomanda.yaml`, `puck_slot.yaml`, `secrets.yaml.example`) |
 | `homeassistant/` | automations: state sync and doorbell |
-| `3d/` | printable enclosures: `bara-d1`, `cutia-c2`, `ecran-dsi-pi4` (STL + parametric Python script) |
+| `3d/` | printable enclosures: `bara-d1` |
 | `docs/` | `INSTALL.md` – step by step |
 
 ## Quick start
