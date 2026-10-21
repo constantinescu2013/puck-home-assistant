@@ -2,6 +2,10 @@ English | [Română](README.ro.md)
 
 # Puck – Home Assistant remote (ESP32-S3, 1.28" round display)
 
+[![Support via PayPal](https://img.shields.io/badge/Support-PayPal-blue?logo=paypal)](https://www.paypal.me/ccristian223)
+
+The three largest STL files (bar body, speaker box body, display base body) are attached to the [Releases](../../releases) page.
+
 A round touch-screen remote for Home Assistant, built on ESPHome. It has a voice assistant (Jarvis), clock, alarm, music control (Music Assistant) and a doorbell popup with a camera snapshot. The repo also contains the 3D-printable enclosures.
 
 ## Hardware
@@ -40,4 +44,4 @@ Note: comments inside the YAML files are in Romanian.
 
 ## License
 
-Code and configuration: MIT (see LICENSE).  3D models (STL): CC BY 4.0, see 3d/LICENSE (to be added).
+Code and configuration: MIT (see `LICENSE`). 3D models (STL): CC BY 4.0.
