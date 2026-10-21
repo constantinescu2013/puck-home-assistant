@@ -4,6 +4,10 @@
 
 [![Support via PayPal](https://img.shields.io/badge/Support-PayPal-blue?logo=paypal)](https://www.paypal.me/ccristian223)
 
+
+![Bar D1 front](docs/bara_fata.png)
+![Bar D1 back](docs/bara_spate34.png)
+
 Cele trei STL-uri mari (corpul barei, corpul cutiei cu difuzor, corpul bazei pentru display) sunt la pagina [Releases](../../releases).
 
 Telecomandă cu ecran rotund tactil pentru Home Assistant, bazată pe ESPHome, cu asistent vocal (Jarvis), ceas, alarmă, control muzică (Music Assistant) și popup de sonerie cu poză de la cameră. În repo sunt și carcasele 3D imprimabile.
