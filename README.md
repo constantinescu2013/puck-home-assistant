@@ -4,8 +4,8 @@ English | [Română](README.ro.md)
 
 [![Support via PayPal](https://img.shields.io/badge/Support-PayPal-blue?logo=paypal)](https://www.paypal.me/ccristian223)
 
-![Bar D1 front](3d/bara-d1/bara_fata34.png)
-![Bar D1 back](3d/bara-d1/bara_spate34.png)
+![Bar D1 front](docs/bara_fata.png)
+![Bar D1 back](docs/bara_spate34.png)
 
 The three largest STL files (bar body, speaker box body, display base body) are attached to the [Releases](../../releases) page.
 
