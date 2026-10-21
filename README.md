@@ -40,4 +40,4 @@ Note: comments inside the YAML files are in Romanian.
 
 ## License
 
-Pick one (for example MIT for code, CC BY 4.0 for the 3D models) and add a `LICENSE` file.
+Code and configuration: MIT (see LICENSE).  3D models (STL): CC BY 4.0, see 3d/LICENSE (to be added).
