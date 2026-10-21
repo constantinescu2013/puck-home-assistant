@@ -1,0 +1,84 @@
+globals:
+  - id: nm_${n}
+    type: std::string
+    restore_value: false
+    initial_value: 'std::string("${label}")'
+  - id: en_${n}
+    type: std::string
+    restore_value: false
+    initial_value: 'std::string("${ent}")'
+  - id: ic_${n}
+    type: int
+    restore_value: false
+    initial_value: 'static_cast<int>(0)'
+  - id: kd_${n}
+    type: int
+    restore_value: false
+    initial_value: 'static_cast<int>(0)'
+
+# ---- setari editabile din Home Assistant ----
+text:
+  - platform: template
+    name: "Buton ${n} - Nume"
+    id: txt_nm_${n}
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "${label}"
+    max_length: 12
+    on_value:
+      - lambda: id(nm_${n}) = x;
+      - script.execute: redraw
+  - platform: template
+    name: "Buton ${n} - Entitate"
+    id: txt_en_${n}
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "${ent}"
+    max_length: 100
+    on_value:
+      - lambda: id(en_${n}) = x;
+
+select:
+  - platform: template
+    name: "Buton ${n} - Icon"
+    id: sel_ic_${n}
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: ${icon}
+    options: [Bec, Power, TV, Ventilator, Incuietoare, Termostat, Muzica, Acasa, Garaj, AC, Jaluzele, Incalzire]
+    on_value:
+      - lambda: id(ic_${n}) = i;
+      - script.execute: redraw
+  - platform: template
+    name: "Buton ${n} - Tip"
+    id: sel_kd_${n}
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: ${kind}
+    options: [Pornit-Oprit, Lumina, Climate]
+    on_value:
+      - lambda: id(kd_${n}) = i;
+      - script.execute: redraw
+
+# ---- stari primite de la Home Assistant (completate de actiunea push_states) ----
+text_sensor:
+  - platform: template
+    id: st_${n}
+    internal: true
+
+sensor:
+  - platform: template
+    id: br_${n}
+    internal: true
+  - platform: template
+    id: tg_${n}
+    internal: true
+  - platform: template
+    id: cu_${n}
+    internal: true

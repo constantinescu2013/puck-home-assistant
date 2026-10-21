@@ -1,0 +1,71 @@
+alias: Puck - sincronizeaza starile
+description: Raspunde la cererea Puck-ului 2 (la fiecare 5 s) cu starile entitatilor alese pe slot-uri
+mode: parallel
+max: 10
+triggers:
+  - trigger: event
+    event_type: esphome.puck_sync
+    event_data:
+      device: puck-telecomanda
+variables:
+  ents: >-
+    {% set d = trigger.event.data %}
+    {{ [d.e1, d.e2, d.e3, d.e4, d.e5, d.e6, d.e7, d.e8] | map('default', '') | list | tojson }}
+actions:
+  - action: esphome.puck_telecomanda_push_states
+    data:
+      s_state: >-
+        {% set ns = namespace(r=[]) %}
+        {% for e in ents | from_json %}
+          {% set ns.r = ns.r + [states(e) if '.' in e else 'unknown'] %}
+        {% endfor %}
+        {{ ns.r | tojson }}
+      s_bri: >-
+        {% set ns = namespace(r=[]) %}
+        {% for e in ents | from_json %}
+          {% set ns.r = ns.r + [(state_attr(e, 'brightness') | float(-1)) if '.' in e else -1] %}
+        {% endfor %}
+        {{ ns.r | tojson }}
+      s_tgt: >-
+        {% set ns = namespace(r=[]) %}
+        {% for e in ents | from_json %}
+          {% set ns.r = ns.r + [(state_attr(e, 'temperature') | float(-1)) if '.' in e else -1] %}
+        {% endfor %}
+        {{ ns.r | tojson }}
+      s_cur: >-
+        {% set ns = namespace(r=[]) %}
+        {% for e in ents | from_json %}
+          {% set ns.r = ns.r + [(state_attr(e, 'current_temperature') | float(-1)) if '.' in e else -1] %}
+        {% endfor %}
+        {{ ns.r | tojson }}
+      s_title: >-
+        {% set ns = namespace(r=[]) %}
+        {% for e in ents | from_json %}
+          {% if e.startswith('media_player.') %}
+            {% set t = (state_attr(e, 'media_artist') or '') ~ '|' ~ (state_attr(e, 'media_title') or '') %}
+          {% elif '.' in e %}
+            {% set t = state_attr(e, 'unit_of_measurement') or '' %}
+          {% else %}
+            {% set t = '' %}
+          {% endif %}
+          {% set ns.r = ns.r + [t] %}
+        {% endfor %}
+        {{ ns.r | tojson }}
+      s_vol: >-
+        {% set ns = namespace(r=[]) %}
+        {% for e in ents | from_json %}
+          {% set ns.r = ns.r + [(state_attr(e, 'volume_level') | float(-1)) if '.' in e else -1] %}
+        {% endfor %}
+        {{ ns.r | tojson }}
+      s_pos: >-
+        {% set ns = namespace(r=[]) %}
+        {% for e in ents | from_json %}
+          {% set ns.r = ns.r + [(state_attr(e, 'media_position') | float(-1)) if '.' in e else -1] %}
+        {% endfor %}
+        {{ ns.r | tojson }}
+      s_dur: >-
+        {% set ns = namespace(r=[]) %}
+        {% for e in ents | from_json %}
+          {% set ns.r = ns.r + [(state_attr(e, 'media_duration') | float(-1)) if '.' in e else -1] %}
+        {% endfor %}
+        {{ ns.r | tojson }}

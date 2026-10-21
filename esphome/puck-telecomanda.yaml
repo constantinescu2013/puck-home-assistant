@@ -1,0 +1,3082 @@
+substitutions:
+  name: puck-telecomanda
+  friendly_name: "Puck Telecomanda"
+  # numele camerei, scris sus pe pagina cu carduri
+  room_label: "Dormitor"
+  wake_word: hey_jarvis
+  # entitatea de vreme folosita pe ceasul din standby (temperatura de afara si pictograma)
+  weather_entity: weather.forecast_acasa
+  # adresa interna a Home Assistant (http, cu portul), pentru poza de album din pagina de muzica
+  ha_url: "http://homeassistant.local:8123"
+  # playerul a carui poza apare pe fundalul paginii de muzica
+  art_entity: media_player.dormitorul_principal_2
+
+# ================= PAGINI (o entitate pe pagina, pana la 8, plus pagina Favorite si pagina Alarma) =================
+# Valorile din slot-uri sunt doar cele de start; dupa prima pornire le schimbi din Home Assistant.
+# icon: Bec, Power, TV, Ventilator, Incuietoare, Termostat, Muzica, Acasa, Garaj, AC, Jaluzele, Incalzire
+# kind: Pornit-Oprit, Lumina, Climate, Media, Senzor
+# smin / smax: limitele cercului pentru tipul Senzor
+packages:
+  slot1: !include
+    file: puck_slot.yaml
+    vars: {n: 1, label: "Living", icon: Bec, kind: Lumina, ent: light.living, smin: 0, smax: 100}
+  slot2: !include
+    file: puck_slot.yaml
+    vars: {n: 2, label: "TV", icon: TV, kind: Pornit-Oprit, ent: switch.priza_tv, smin: 0, smax: 100}
+  slot3: !include
+    file: puck_slot.yaml
+    vars: {n: 3, label: "Ventilator", icon: Ventilator, kind: Pornit-Oprit, ent: fan.ventilator, smin: 0, smax: 100}
+  slot4: !include
+    file: puck_slot.yaml
+    vars: {n: 4, label: "AC", icon: AC, kind: Climate, ent: climate.ac_living, smin: 0, smax: 100}
+  slot5: !include
+    file: puck_slot.yaml
+    vars: {n: 5, label: "Dormitor", icon: Bec, kind: Lumina, ent: light.dormitor, smin: 0, smax: 100}
+  slot6: !include
+    file: puck_slot.yaml
+    vars: {n: 6, label: "Garaj", icon: Garaj, kind: Pornit-Oprit, ent: cover.garaj, smin: 0, smax: 100}
+  slot7: !include
+    file: puck_slot.yaml
+    vars: {n: 7, label: "Temperatura", icon: Termostat, kind: Senzor, ent: sensor.temperatura_living, smin: 10, smax: 35}
+  slot8: !include
+    file: puck_slot.yaml
+    vars: {n: 8, label: "Muzica", icon: Muzica, kind: Media, ent: media_player.dormitorul_principal_2, smin: 0, smax: 100}
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2025.5.0
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: activity
+      - script.execute: bright_update
+      - delay: 3s
+      - script.execute: go_home
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+
+api:
+  encryption:
+    key: !secret interfon_electra__encryption_key
+  on_client_connected:
+    - delay: 3s
+    - script.execute: sync_ha
+  actions:
+    - action: push_states
+      variables:
+        s_state: string[]
+        s_bri: float[]
+        s_tgt: float[]
+        s_cur: float[]
+        s_title: string[]
+        s_vol: float[]
+        s_pos: float[]
+        s_dur: float[]
+      then:
+        - lambda: |-
+            text_sensor::TextSensor *a_st[8] = {id(st_1), id(st_2), id(st_3), id(st_4), id(st_5), id(st_6), id(st_7), id(st_8)};
+            text_sensor::TextSensor *a_ti[8] = {id(ti_1), id(ti_2), id(ti_3), id(ti_4), id(ti_5), id(ti_6), id(ti_7), id(ti_8)};
+            sensor::Sensor *a_br[8] = {id(br_1), id(br_2), id(br_3), id(br_4), id(br_5), id(br_6), id(br_7), id(br_8)};
+            sensor::Sensor *a_tg[8] = {id(tg_1), id(tg_2), id(tg_3), id(tg_4), id(tg_5), id(tg_6), id(tg_7), id(tg_8)};
+            sensor::Sensor *a_cu[8] = {id(cu_1), id(cu_2), id(cu_3), id(cu_4), id(cu_5), id(cu_6), id(cu_7), id(cu_8)};
+            sensor::Sensor *a_vo[8] = {id(vo_1), id(vo_2), id(vo_3), id(vo_4), id(vo_5), id(vo_6), id(vo_7), id(vo_8)};
+            sensor::Sensor *a_po[8] = {id(po_1), id(po_2), id(po_3), id(po_4), id(po_5), id(po_6), id(po_7), id(po_8)};
+            sensor::Sensor *a_du[8] = {id(du_1), id(du_2), id(du_3), id(du_4), id(du_5), id(du_6), id(du_7), id(du_8)};
+            auto differs = [](float a, float b) -> bool {
+              if (std::isnan(a) && std::isnan(b)) return false;
+              if (std::isnan(a) || std::isnan(b)) return true;
+              return fabsf(a - b) > 0.01f;
+            };
+            ESP_LOGD("puck", "push_states: n=%d s1=%s s2=%s s3=%s s4=%s", (int) s_state.size(),
+                     s_state.size() > 0 ? s_state[0].c_str() : "-",
+                     s_state.size() > 1 ? s_state[1].c_str() : "-",
+                     s_state.size() > 2 ? s_state[2].c_str() : "-",
+                     s_state.size() > 3 ? s_state[3].c_str() : "-");
+            bool changed = false;
+            for (int i = 0; i < 8; i++) {
+              if (i < (int) s_state.size() && a_st[i]->state != s_state[i]) {
+                a_st[i]->publish_state(s_state[i]);
+                changed = true;
+              }
+              if (i < (int) s_title.size() && a_ti[i]->state != s_title[i]) {
+                a_ti[i]->publish_state(s_title[i]);
+                changed = true;
+              }
+              if (i < (int) s_bri.size()) {
+                float v = s_bri[i] < 0 ? NAN : s_bri[i];
+                if (differs(a_br[i]->state, v)) { a_br[i]->publish_state(v); changed = true; }
+              }
+              if (i < (int) s_tgt.size()) {
+                float v = s_tgt[i] < 0 ? NAN : s_tgt[i];
+                if (differs(a_tg[i]->state, v)) { a_tg[i]->publish_state(v); changed = true; }
+              }
+              if (i < (int) s_cur.size()) {
+                float v = s_cur[i] < 0 ? NAN : s_cur[i];
+                if (differs(a_cu[i]->state, v)) { a_cu[i]->publish_state(v); changed = true; }
+              }
+              if (i < (int) s_vol.size()) {
+                float v = s_vol[i] < 0 ? NAN : s_vol[i];
+                if (differs(a_vo[i]->state, v)) { a_vo[i]->publish_state(v); changed = true; }
+              }
+              if (i < (int) s_pos.size()) {
+                float v = s_pos[i] < 0 ? NAN : s_pos[i];
+                if (differs(a_po[i]->state, v)) { a_po[i]->publish_state(v); changed = true; }
+              }
+              if (i < (int) s_dur.size()) {
+                float v = s_dur[i] < 0 ? NAN : s_dur[i];
+                if (differs(a_du[i]->state, v)) { a_du[i]->publish_state(v); changed = true; }
+              }
+            }
+            id(last_push_ms) = millis();
+            id(push_changed) = changed;
+        - if:
+            condition:
+              lambda: 'return id(push_changed);'
+            then:
+              - script.execute: redraw
+    # sonerie: Home Assistant trimite adresa pozei de la camera; Puck afiseaza fereastra cu Deschide / Ignora
+    - action: doorbell
+      variables:
+        image_url: string
+      then:
+        - lambda: |-
+            id(door_ok) = false;
+            id(door_show) = true;
+            id(view) = 0;
+        - light.turn_on:
+            id: backlight
+            brightness: !lambda 'return id(act_bright);'
+        - script.execute: door_guard
+        - script.execute: activity
+        - online_image.set_url:
+            id: door_img
+            url: !lambda |-
+              std::string u = std::string(image_url.c_str());
+              if (u.rfind("http", 0) == 0) return u;
+              return std::string("${ha_url}") + u;
+        - component.update: door_img
+        - component.update: lcd
+        # sunet de sonerie pe difuzorul Puck-ului (de doua ori), daca nu suna alarma
+        - repeat:
+            count: 2
+            then:
+              - if:
+                  condition:
+                    lambda: 'return id(door_snd)->state && !id(alarm_ringing) && id(door_show);'
+                  then:
+                    - media_player.speaker.play_on_device_media_file:
+                        media_file: timer_finished_sound
+                        announcement: true
+                    - delay: 3s
+
+ota:
+  - platform: esphome
+
+# ================= POZA DE ALBUM / LOGO RADIO PE FUNDALUL PAGINII DE MUZICA =================
+http_request:
+  timeout: 20s
+  buffer_size_rx: 4096
+
+image:
+  - platform: online_image
+    id: art_img
+    # adresa reala se seteaza din text_sensor-ul art_path, cand se schimba piesa; aceasta e doar o valoare de pornire
+    url: "${ha_url}/local/none.png"
+    format: AUTO
+    type: RGB565
+    resize: 240x240
+    update_interval: never
+    on_download_finished:
+      - lambda: id(art_ok) = true;
+      - component.update: lcd
+    on_error:
+      - lambda: id(art_ok) = false;
+      - component.update: lcd
+
+  # poza de la camera soneriei (se descarca de fiecare data cand suna)
+  - platform: online_image
+    id: door_img
+    url: "${ha_url}/local/none.png"
+    format: AUTO
+    type: RGB565
+    resize: 240x240
+    update_interval: never
+    on_download_finished:
+      - lambda: id(door_ok) = true;
+      - component.update: lcd
+    on_error:
+      - lambda: id(door_ok) = false;
+      - component.update: lcd
+
+# ================= ORA (de la Home Assistant, cu rezerva de la internet) =================
+time:
+  - platform: homeassistant
+    id: ha_time
+    on_time_sync:
+      - script.execute: redraw
+    on_time:
+      - seconds: 0
+        then:
+          - if:
+              condition:
+                lambda: 'return id(view) == 2;'
+              then:
+                - component.update: lcd
+          - script.execute: alarm_check
+  # rezerva: daca Home Assistant nu e disponibil, ceasul si alarma merg de la internet
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Bucharest
+    servers:
+      - ro.pool.ntp.org
+      - pool.ntp.org
+      - time.google.com
+    on_time:
+      - seconds: 0
+        then:
+          - script.execute: alarm_check
+
+# ================= SETARI REGLABILE DIN HOME ASSISTANT =================
+number:
+  - platform: template
+    name: "Numar pagini"
+    id: num_pages
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 8
+    min_value: 1
+    max_value: 8
+    step: 1
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Standby - dupa (secunde)"
+    id: num_standby
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 40
+    min_value: 10
+    max_value: 600
+    step: 5
+    unit_of_measurement: "s"
+  - platform: template
+    name: "Ecran - luminozitate activa"
+    id: num_bright
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    min_value: 5
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+  - platform: template
+    name: "Standby - luminozitate"
+    id: num_dim
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 15
+    min_value: 1
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+  # ---- alarma ----
+  - platform: template
+    name: "Alarma - ora"
+    id: alarm_h
+    optimistic: true
+    restore_value: true
+    initial_value: 7
+    min_value: 0
+    max_value: 23
+    step: 1
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Alarma - minut"
+    id: alarm_min
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 59
+    step: 1
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Alarma - amanare (min)"
+    id: alarm_snooze_min
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 10
+    min_value: 1
+    max_value: 30
+    step: 1
+    unit_of_measurement: "min"
+  - platform: template
+    name: "Alarma - trezire graduala (min)"
+    id: alarm_ramp_min
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 3
+    min_value: 0
+    max_value: 15
+    step: 1
+    unit_of_measurement: "min"
+  - platform: template
+    name: "Alarma - volum maxim"
+    id: alarm_vol_max
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    min_value: 10
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+  # ---- sleep: cat dureaza scaderea lina a volumului inainte de pauza ----
+  - platform: template
+    name: "Sleep - fade (secunde)"
+    id: num_fade
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    min_value: 0
+    max_value: 300
+    step: 10
+    unit_of_measurement: "s"
+  # ---- mod noapte automat ----
+  - platform: template
+    name: "Noapte - de la ora"
+    id: night_from
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 22
+    min_value: 0
+    max_value: 23
+    step: 1
+  - platform: template
+    name: "Noapte - pana la ora"
+    id: night_to
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 7
+    min_value: 0
+    max_value: 23
+    step: 1
+  - platform: template
+    name: "Noapte - luminozitate standby"
+    id: night_dim
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 3
+    min_value: 1
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+  - platform: template
+    name: "Noapte - luminozitate maxima"
+    id: night_act
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    min_value: 5
+    max_value: 100
+    step: 5
+    unit_of_measurement: "%"
+
+# ---- pagina Favorite: 3 posturi de radio + 1 playlist din Music Assistant ----
+text:
+  - platform: template
+    name: "Favorite - Player"
+    id: fav_player
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "media_player.dormitorul_principal_2"
+    max_length: 100
+  - platform: template
+    name: "Alarma - lumina de trezire"
+    id: alarm_light
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    max_length: 100
+  - platform: template
+    name: "Favorit 1 - Nume"
+    id: fav_n1
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "Radio 1"
+    max_length: 12
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 1 - Continut"
+    id: fav_c1
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    max_length: 100
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 2 - Nume"
+    id: fav_n2
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "Radio 2"
+    max_length: 12
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 2 - Continut"
+    id: fav_c2
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    max_length: 100
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 3 - Nume"
+    id: fav_n3
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "Radio 3"
+    max_length: 12
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 3 - Continut"
+    id: fav_c3
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    max_length: 100
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 4 - Nume"
+    id: fav_n4
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: "Playlist"
+    max_length: 12
+    on_value:
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 4 - Continut"
+    id: fav_c4
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: ""
+    max_length: 100
+    on_value:
+      - script.execute: redraw
+
+select:
+  - platform: template
+    name: "Tema ecran"
+    id: sel_theme
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: Chihlimbar
+    options: [Chihlimbar, Albastru, Verde, Rosu, Violet, Alb]
+    on_value:
+      - lambda: id(theme) = i;
+      - script.execute: redraw
+  # ---- standby: ceas analogic (cadran cu ace, temperatura, vreme, data) sau digital ----
+  - platform: template
+    name: "Standby - stil"
+    id: sel_standby
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: Analog
+    options: [Analog, Digital]
+    on_value:
+      - lambda: id(sb_style) = i;
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 1 - Tip"
+    id: fav_t1
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: Radio
+    options: [Radio, Playlist, Album, Piesa, Artist]
+    on_value:
+      - lambda: id(fav_ty1) = i;
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 2 - Tip"
+    id: fav_t2
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: Radio
+    options: [Radio, Playlist, Album, Piesa, Artist]
+    on_value:
+      - lambda: id(fav_ty2) = i;
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 3 - Tip"
+    id: fav_t3
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: Radio
+    options: [Radio, Playlist, Album, Piesa, Artist]
+    on_value:
+      - lambda: id(fav_ty3) = i;
+      - script.execute: redraw
+  - platform: template
+    name: "Favorit 4 - Tip"
+    id: fav_t4
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: Playlist
+    options: [Radio, Playlist, Album, Piesa, Artist]
+    on_value:
+      - lambda: id(fav_ty4) = i;
+      - script.execute: redraw
+  # ---- sleep timer pentru muzica: nu se restaureaza dupa repornire, ca sa nu porneasca singur ----
+  - platform: template
+    name: "Sleep timer"
+    id: sel_sleep
+    optimistic: true
+    restore_value: false
+    initial_option: Oprit
+    options: [Oprit, 15 min, 30 min, 45 min, 60 min, 90 min]
+    on_value:
+      - lambda: |-
+          static const int MIN[6] = {0, 15, 30, 45, 60, 90};
+          int m = (i >= 0 && i < 6) ? MIN[i] : 0;
+          id(sleep_left) = m * 60;
+          id(sleep_pub) = m;
+          id(sleep_rem)->publish_state(m);
+      # daca se anuleaza in timpul scaderii volumului, il pune la loc
+      - if:
+          condition:
+            lambda: 'return i == 0 && id(fade_active);'
+          then:
+            - script.stop: sleep_fade
+            - lambda: id(fade_active) = false;
+            - homeassistant.action:
+                action: media_player.volume_set
+                data:
+                  entity_id: !lambda 'return id(fav_player)->state;'
+                  volume_level: !lambda 'return str_sprintf("%.2f", id(fade_v0));'
+      - script.execute: redraw
+  # ---- alarma: cu ce suna (sunet de la Puck sau un favorit din Music Assistant) ----
+  - platform: template
+    name: "Alarma - sunet"
+    id: sel_alarm
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: Sunet Puck
+    options: [Sunet Puck, Favorit 1, Favorit 2, Favorit 3, Favorit 4]
+    on_value:
+      - lambda: id(alarm_snd_idx) = i;
+
+# ================= SENZORI =================
+sensor:
+  - platform: adc
+    pin: GPIO1
+    name: "Baterie - Tensiune"
+    id: battery_voltage
+    attenuation: 12db
+    accuracy_decimals: 2
+    update_interval: 1s
+    unit_of_measurement: "V"
+    icon: mdi:battery-medium
+    filters:
+      - multiply: 2.0
+      - median:
+          window_size: 7
+          send_every: 7
+          send_first_at: 7
+      - throttle: 1min
+    on_value:
+      then:
+        - component.update: battery_percentage
+
+  - platform: template
+    id: battery_percentage
+    name: "Baterie"
+    lambda: return id(battery_voltage).state;
+    update_interval: never
+    accuracy_decimals: 0
+    unit_of_measurement: "%"
+    device_class: battery
+    filters:
+      - calibrate_linear:
+          method: exact
+          datapoints:
+            - 2.80 -> 0.0
+            - 3.10 -> 10.0
+            - 3.30 -> 20.0
+            - 3.45 -> 30.0
+            - 3.60 -> 40.0
+            - 3.70 -> 50.0
+            - 3.75 -> 60.0
+            - 3.80 -> 70.0
+            - 3.90 -> 80.0
+            - 4.00 -> 90.0
+            - 4.20 -> 100.0
+      - lambda: |-
+          if (x > 100) return 100;
+          if (x < 0) return 0;
+          return x;
+    on_value:
+      then:
+        - script.execute: redraw
+
+  - platform: template
+    name: "Sleep timer - ramas"
+    id: sleep_rem
+    unit_of_measurement: "min"
+    accuracy_decimals: 0
+    update_interval: never
+
+  # temperatura de afara (atributul "temperature" al entitatii de vreme), pentru ceasul din standby
+  - platform: homeassistant
+    id: wx_temp
+    entity_id: ${weather_entity}
+    attribute: temperature
+    internal: true
+
+  - platform: wifi_signal
+    id: wifi_sig
+    name: "Semnal WiFi"
+    update_interval: 60s
+
+  - platform: uptime
+    name: "Uptime"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "Adresa IP"
+  - platform: template
+    name: "Ultima comanda vocala"
+    id: ts_req
+  - platform: template
+    name: "Ultimul raspuns vocal"
+    id: ts_resp
+  # starea vremii (sunny, rainy, cloudy...), pentru pictograma din standby
+  - platform: homeassistant
+    id: wx_state
+    entity_id: ${weather_entity}
+    internal: true
+  # adresa imaginii curente (poza de album sau logoul postului); cand se schimba, Puck-ul o descarca
+  - platform: homeassistant
+    id: art_path
+    entity_id: ${art_entity}
+    attribute: entity_picture
+    internal: true
+    on_value:
+      then:
+        - if:
+            condition:
+              lambda: 'return !x.empty() && x != "unknown" && x != "None";'
+            then:
+              - online_image.set_url:
+                  id: art_img
+                  url: !lambda |-
+                    if (x.rfind("http", 0) == 0) return x;
+                    return std::string("${ha_url}") + x;
+              - component.update: art_img
+            else:
+              - lambda: id(art_ok) = false;
+              - script.execute: redraw
+
+# ================= HARDWARE (pini din fisierul Ball V2 / Puck) =================
+output:
+  - platform: ledc
+    pin: GPIO42
+    id: backlight_output
+    inverted: true
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Ecran"
+    output: backlight_output
+    restore_mode: ALWAYS_ON
+    default_transition_length: 250ms
+  - platform: esp32_rmt_led_strip
+    id: led
+    name: "LED RGB"
+    pin: GPIO48
+    chipset: WS2812
+    num_leds: 1
+    rgb_order: grb
+    default_transition_length: 0s
+
+spi:
+  clk_pin: GPIO4
+  mosi_pin: GPIO2
+
+i2c:
+  - id: bus_a
+    sda: GPIO15
+    scl: GPIO14
+    scan: true
+  - id: bus_b
+    sda: GPIO11
+    scl: GPIO7
+    scan: true
+
+# ================= AUDIO (microfon + difuzor, din fisierul Ball V2) =================
+i2s_audio:
+  - id: i2s_audio_bus
+    i2s_lrclk_pin: GPIO45
+    i2s_bclk_pin: GPIO9
+    i2s_mclk_pin: GPIO16
+
+audio_dac:
+  - platform: es8311
+    i2c_id: bus_a
+    id: es8311_dac
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+microphone:
+  - platform: i2s_audio
+    id: i2s_mics
+    sample_rate: 16000
+    i2s_din_pin: GPIO10
+    bits_per_sample: 16bit
+    adc_type: external
+    channel: left
+
+speaker:
+  - platform: i2s_audio
+    id: i2s_audio_speaker
+    i2s_dout_pin: GPIO8
+    dac_type: external
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    channel: left
+    audio_dac: es8311_dac
+    buffer_duration: 100ms
+
+media_player:
+  - platform: speaker
+    name: "Difuzor"
+    id: external_media_player
+    announcement_pipeline:
+      speaker: i2s_audio_speaker
+      format: FLAC
+      sample_rate: 16000
+      num_channels: 1
+    files:
+      - id: wake_word_triggered_sound
+        file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/wake_word_triggered.flac
+      - id: timer_finished_sound
+        file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/timer_finished.flac
+    on_announcement:
+      - if:
+          condition:
+            - microphone.is_capturing:
+          then:
+            - micro_wake_word.stop:
+    on_idle:
+      - if:
+          condition:
+            not:
+              voice_assistant.is_running:
+          then:
+            - micro_wake_word.start:
+
+micro_wake_word:
+  id: mww
+  models:
+    - ${wake_word}
+  on_wake_word_detected:
+    - lambda: |-
+        if (id(view) == 2) id(view) = 0;
+        id(va_frame) = 0;
+        id(va_phase) = 1;
+    - light.turn_on:
+        id: backlight
+        brightness: !lambda 'return id(act_bright);'
+    - script.execute: activity
+    - script.execute: va_guard
+    - component.update: lcd
+    - media_player.speaker.play_on_device_media_file:
+        media_file: wake_word_triggered_sound
+        announcement: true
+    - delay: 300ms
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+
+voice_assistant:
+  id: va
+  microphone: i2s_mics
+  media_player: external_media_player
+  micro_wake_word: mww
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+  on_listening:
+    - lambda: id(va_phase) = 1;
+    - text_sensor.template.publish:
+        id: ts_req
+        state: ""
+    - text_sensor.template.publish:
+        id: ts_resp
+        state: ""
+    - light.turn_on:
+        id: led
+        red: 0%
+        green: 40%
+        blue: 100%
+        brightness: 40%
+    - script.execute: va_guard
+    - script.execute: redraw
+  on_stt_vad_end:
+    - lambda: id(va_phase) = 2;
+    - light.turn_on:
+        id: led
+        red: 100%
+        green: 60%
+        blue: 0%
+        brightness: 40%
+    - script.execute: va_guard
+    - script.execute: redraw
+  on_stt_end:
+    - text_sensor.template.publish:
+        id: ts_req
+        state: !lambda 'return x.substr(0, 250);'
+    - script.execute: redraw
+  on_tts_start:
+    - text_sensor.template.publish:
+        id: ts_resp
+        state: !lambda 'return x.substr(0, 250);'
+    - lambda: id(va_phase) = 3;
+    - light.turn_on:
+        id: led
+        red: 0%
+        green: 100%
+        blue: 30%
+        brightness: 40%
+    - script.execute: va_guard
+    - script.execute: redraw
+  on_end:
+    - wait_until:
+        condition:
+          - media_player.is_announcing:
+        timeout: 0.5s
+    - wait_until:
+        - and:
+            - not:
+                media_player.is_announcing:
+            - not:
+                speaker.is_playing:
+    - lambda: id(va).set_use_wake_word(false);
+    - micro_wake_word.start:
+    - lambda: id(va_phase) = 0;
+    - light.turn_off: led
+    - script.execute: redraw
+  on_error:
+    - lambda: id(va_phase) = 4;
+    - light.turn_on:
+        id: led
+        red: 100%
+        green: 0%
+        blue: 0%
+        brightness: 40%
+    - script.execute: redraw
+    - delay: 1s
+    - lambda: id(va_phase) = 0;
+    - light.turn_off: led
+    - script.execute: redraw
+  on_client_connected:
+    - lambda: id(va).set_use_wake_word(false);
+    - micro_wake_word.start:
+  on_client_disconnected:
+    - micro_wake_word.stop:
+
+switch:
+  - platform: template
+    name: "Microfon - mut"
+    id: mic_mute
+    icon: mdi:microphone-off
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - microphone.mute:
+    on_turn_off:
+      - microphone.unmute:
+  - platform: template
+    name: "Pagina favorite"
+    id: fav_on
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - script.execute: redraw
+    on_turn_off:
+      - script.execute: redraw
+  # poza de album / logo radio pe fundalul paginii de muzica
+  - platform: template
+    name: "Media - poza de fundal"
+    id: art_bg_on
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - script.execute: redraw
+    on_turn_off:
+      - script.execute: redraw
+  # ---- alarma ----
+  - platform: template
+    name: "Alarma activa"
+    id: alarm_on
+    icon: mdi:alarm
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: redraw
+    on_turn_off:
+      - script.execute: redraw
+  - platform: template
+    name: "Alarma - doar Luni-Vineri"
+    id: alarm_wd
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: redraw
+    on_turn_off:
+      - script.execute: redraw
+  - platform: template
+    name: "Pagina alarma"
+    id: alarm_pg
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - script.execute: redraw
+    on_turn_off:
+      - script.execute: redraw
+  # pagina cu carduri (prima pagina la pornire) si pagina de diagnostic
+  - platform: template
+    name: "Pagina carduri"
+    id: card_pg
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - script.execute: redraw
+    on_turn_off:
+      - script.execute: redraw
+  - platform: template
+    name: "Pagina diagnostic"
+    id: diag_pg
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+    on_turn_on:
+      - script.execute: redraw
+    on_turn_off:
+      - script.execute: redraw
+  # sunetul soneriei pe difuzorul Puck-ului
+  - platform: template
+    name: "Sonerie - sunet"
+    id: door_snd
+    icon: mdi:bell-ring
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+  - platform: template
+    name: "Mod noapte automat"
+    id: night_on
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+  - platform: gpio
+    name: "Amplificator difuzor"
+    pin: GPIO46
+    entity_category: config
+    restore_mode: RESTORE_DEFAULT_ON
+
+button:
+  - platform: template
+    name: "Alarma - test"
+    id: btn_alarm_test
+    on_press:
+      - script.execute: alarm_ring
+  - platform: template
+    name: "Alarma - opreste"
+    id: btn_alarm_stop
+    on_press:
+      - script.execute: alarm_dismiss
+
+event:
+  - platform: template
+    name: "Buton fizic"
+    id: ev_button
+    device_class: button
+    event_types:
+      - click
+      - double_click
+      - long_press
+
+binary_sensor:
+  # butonul BOOT (GPIO0): click = trezeste ecranul, dublu-click = mut microfon, apasare lunga = asistent vocal
+  - platform: gpio
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+      ignore_strapping_warning: true
+    internal: true
+    id: btn_back
+    on_press:
+      - lambda: id(view) = 0;
+      - light.turn_on:
+          id: backlight
+          brightness: !lambda 'return id(act_bright);'
+      - script.execute: activity
+      - component.update: lcd
+    on_multi_click:
+      - timing:
+          - ON for at most 1s
+          - OFF for at least 0.4s
+        then:
+          - event.trigger:
+              id: ev_button
+              event_type: click
+      - timing:
+          - ON for at most 1s
+          - OFF for at most 0.4s
+          - ON for at most 1s
+          - OFF for at least 0.2s
+        then:
+          - event.trigger:
+              id: ev_button
+              event_type: double_click
+          - switch.toggle: mic_mute
+      - timing:
+          - ON for at least 1s
+        then:
+          - event.trigger:
+              id: ev_button
+              event_type: long_press
+          - if:
+              condition:
+                voice_assistant.is_running:
+              then:
+                - voice_assistant.stop:
+              else:
+                - voice_assistant.start:
+
+# Ecranul e rotit 180 grade, deci coordonatele atingerii sunt inversate (239 - x, 239 - y)
+touchscreen:
+  - platform: cst816
+    id: touch_dp
+    i2c_id: bus_b
+    interrupt_pin: GPIO12
+    reset_pin: GPIO6
+    on_touch:
+      - lambda: |-
+          if (!id(touching)) {
+            id(touching) = true;
+            id(tx0) = 239 - touch.x;
+            id(ty0) = 239 - touch.y;
+            id(ignore_rel) = (id(view) == 2) || (id(va_phase) > 0) || !id(backlight)->current_values.is_on();
+            if (id(view) == 2) id(view) = 0;
+          }
+          id(tx) = 239 - touch.x;
+          id(ty) = 239 - touch.y;
+      - if:
+          condition:
+            lambda: 'return id(va_phase) > 0;'
+          then:
+            - voice_assistant.stop:
+      - light.turn_on:
+          id: backlight
+          brightness: !lambda 'return id(act_bright);'
+      - script.execute: activity
+      - if:
+          condition:
+            lambda: 'return id(ignore_rel);'
+          then:
+            - component.update: lcd
+    on_update:
+      - lambda: |-
+          if (!touches.empty()) {
+            id(tx) = 239 - touches[0].x;
+            id(ty) = 239 - touches[0].y;
+          }
+    on_release:
+      - if:
+          condition:
+            lambda: 'return id(ignore_rel);'
+          then:
+            - lambda: |-
+                id(ignore_rel) = false;
+                id(touching) = false;
+          else:
+            - lambda: |-
+                id(touching) = false;
+                id(ui_op) = -1;
+                int x = id(tx), y = id(ty);
+                int dx = id(tx) - id(tx0);
+                int dy = id(ty) - id(ty0);
+                int np = (int) id(num_pages)->state;
+                if (np < 1) np = 1;
+                if (np > 8) np = 8;
+                int *a_kd[8] = {&id(kd_1), &id(kd_2), &id(kd_3), &id(kd_4), &id(kd_5), &id(kd_6), &id(kd_7), &id(kd_8)};
+                // cardurile principale: primul slot de fiecare fel (lumina, clima, muzica); restul merg pe paginile "Mai multe"
+                int m1 = -1, m2 = -1, m3 = -1, m4 = -1;
+                for (int i = 0; i < np; i++) {
+                  int k = *a_kd[i];
+                  if (k == 1 && m1 < 0) m1 = i;
+                  if (k == 2 && m2 < 0) m2 = i;
+                  if (k == 3 && m3 < 0) m3 = i;
+                  if (k == 4 && m4 < 0) m4 = i;
+                }
+                if (m2 < 0) m2 = m4;
+                int rest[8];
+                int nr = 0;
+                for (int i = 0; i < np; i++) {
+                  if (i != m1 && i != m2 && i != m3) rest[nr++] = i;
+                }
+                int nmore = (nr + 3) / 4;
+                // ordinea paginilor: Carduri, Mai multe, Favorite, Alarma, Diagnostic
+                int pi = 1, pmore = -1, pfav = -1, palm = -1, pdiag = -1;
+                if (nmore > 0) { pmore = pi; pi += nmore; }
+                if (id(fav_on)->state) pfav = pi++;
+                if (id(alarm_pg)->state) palm = pi++;
+                if (id(diag_pg)->state) pdiag = pi++;
+                int np2 = pi;
+                if (id(page) < 0 || id(page) >= np2) id(page) = 0;
+                int pg = id(page);
+                bool cardp = (pg == 0);
+                bool morep = (pmore >= 0 && pg >= pmore && pg < pmore + nmore);
+                bool favp = (pg == pfav);
+                bool alp = (pg == palm);
+                bool diagp = (pg == pdiag);
+                int ds = id(det_slot);
+                if (ds >= np) { id(det_slot) = -1; ds = -1; }
+                int kind = (ds >= 0) ? *a_kd[ds] : -1;
+                if (id(alarm_ringing)) {
+                  // alarma suna: 31 = amana, 30 = stop
+                  if ((x - 76) * (x - 76) + (y - 170) * (y - 170) < 40 * 40) {
+                    id(ui_op) = 31;
+                  } else if ((x - 164) * (x - 164) + (y - 170) * (y - 170) < 40 * 40) {
+                    id(ui_op) = 30;
+                  }
+                } else if (id(door_show)) {
+                  // sonerie: 60 = deschide, 61 = ignora
+                  if ((x - 78) * (x - 78) + (y - 192) * (y - 192) < 36 * 36) {
+                    id(ui_op) = 60;
+                  } else if ((x - 162) * (x - 162) + (y - 192) * (y - 192) < 36 * 36) {
+                    id(ui_op) = 61;
+                  }
+                } else if (id(fade_active) && id(view) == 0) {
+                  // orice atingere in timpul scaderii volumului anuleaza sleep-ul
+                  id(ui_op) = 62;
+                } else if (id(view) == 0) {
+                  if (dx < -50 && abs(dy) < 60) {
+                    if (ds >= 0) id(det_slot) = -1;
+                    else id(page) = (id(page) + 1) % np2;
+                  } else if (dx > 50 && abs(dy) < 60) {
+                    if (ds >= 0) id(det_slot) = -1;
+                    else id(page) = (id(page) + np2 - 1) % np2;
+                  } else if (abs(dx) < 30 && abs(dy) < 30) {
+                    if (ds < 0 && x < 28 && y > 80 && y < 140) {
+                      id(page) = (id(page) + np2 - 1) % np2;
+                    } else if (ds < 0 && x > 212 && y > 80 && y < 140) {
+                      id(page) = (id(page) + 1) % np2;
+                    } else if (ds >= 0 && y < 46) {
+                      id(det_slot) = -1;
+                    } else if (ds >= 0) {
+                      if (kind == 3) {
+                        // media: 3 = anterior, 4 = play/pauza, 5 = urmator, 7 = volum din bara, 20 = sleep timer
+                        int my = y - 122;
+                        if ((x - 120) * (x - 120) + my * my < 34 * 34) {
+                          id(ui_op) = 4;
+                        } else if ((x - 72) * (x - 72) + my * my < 28 * 28) {
+                          id(ui_op) = 3;
+                        } else if ((x - 168) * (x - 168) + my * my < 28 * 28) {
+                          id(ui_op) = 5;
+                        } else if ((x - 186) * (x - 186) + (y - 186) * (y - 186) < 24 * 24) {
+                          id(ui_op) = 20;
+                        } else if (y >= 172 && y <= 204 && x >= 64 && x <= 164) {
+                          float f = (x - 70) / 90.0f;
+                          if (f < 0.0f) f = 0.0f;
+                          if (f > 1.0f) f = 1.0f;
+                          id(ui_val) = f;
+                          id(ui_op) = 7;
+                        }
+                      } else if (kind == 4) {
+                        // senzor: doar afisare
+                      } else if (kind == 0) {
+                        int ix = x - 120, iy = y - 112;
+                        if (ix * ix + iy * iy < 76 * 76) id(ui_op) = 0;
+                      } else {
+                        // lumina / clima: minus, pornit-oprit, plus (y = 188)
+                        if ((x - 120) * (x - 120) + (y - 188) * (y - 188) < 28 * 28) id(ui_op) = 0;
+                        else if ((x - 64) * (x - 64) + (y - 188) * (y - 188) < 28 * 28) id(ui_op) = 2;
+                        else if ((x - 176) * (x - 176) + (y - 188) * (y - 188) < 28 * 28) id(ui_op) = 1;
+                      }
+                    } else if (favp) {
+                      // pagina Favorite: 4 butoane rotunde, op 10..13
+                      const int fx[4] = {74, 166, 74, 166};
+                      const int fy[4] = {90, 90, 170, 170};
+                      for (int i = 0; i < 4; i++) {
+                        int ddx = x - fx[i];
+                        int ddy = y - fy[i];
+                        if (ddx * ddx + ddy * ddy < 42 * 42) {
+                          id(fav_idx) = i;
+                          id(ui_op) = 10 + i;
+                          break;
+                        }
+                      }
+                    } else if (alp) {
+                      // pagina Alarma: 40 ora+, 41 ora-, 42 minut+, 43 minut-, 44 pornit/oprit
+                      if ((x - 60) * (x - 60) + (y - 146) * (y - 146) < 19 * 19) {
+                        id(ui_op) = 40;
+                      } else if ((x - 60) * (x - 60) + (y - 184) * (y - 184) < 19 * 19) {
+                        id(ui_op) = 41;
+                      } else if ((x - 180) * (x - 180) + (y - 146) * (y - 146) < 19 * 19) {
+                        id(ui_op) = 42;
+                      } else if ((x - 180) * (x - 180) + (y - 184) * (y - 184) < 19 * 19) {
+                        id(ui_op) = 43;
+                      } else if ((x - 120) * (x - 120) + (y - 166) * (y - 166) < 30 * 30) {
+                        id(ui_op) = 44;
+                      }
+                    } else if (cardp || morep) {
+                      // carduri: atingi un card ca sa intri in detaliu; pe prima pagina bara de jos = volumul muzicii (op 7)
+                      int cell = -1;
+                      if (y >= 42 && y <= 102 && x >= 38 && x <= 118) cell = 0;
+                      else if (y >= 42 && y <= 102 && x >= 122 && x <= 202) cell = 1;
+                      else if (y >= 110 && y <= 170 && x >= 38 && x <= 118) cell = 2;
+                      else if (y >= 110 && y <= 170 && x >= 122 && x <= 202) cell = 3;
+                      if (cell >= 0) {
+                        int sl = -1;
+                        if (cardp) {
+                          if (cell == 0) sl = m1;
+                          else if (cell == 1) sl = m2;
+                          else if (cell == 2) sl = m3;
+                          else if (palm >= 0) id(page) = palm;
+                        } else {
+                          int j = (pg - pmore) * 4 + cell;
+                          if (j < nr) sl = rest[j];
+                        }
+                        if (sl >= 0) id(det_slot) = sl;
+                      } else if (cardp && y >= 174 && y <= 204 && x >= 56 && x <= 184 && m3 >= 0) {
+                        float f = (x - 60) / 120.0f;
+                        if (f < 0.0f) f = 0.0f;
+                        if (f > 1.0f) f = 1.0f;
+                        id(ui_val) = f;
+                        id(cmd_slot) = m3;
+                        id(ui_op) = 7;
+                      }
+                    } else if (diagp) {
+                      // diagnostic: doar afisare
+                    }
+                  }
+                }
+                if (ds >= 0 && id(ui_op) >= 0 && id(ui_op) < 10) id(cmd_slot) = ds;
+                ESP_LOGI("puck", "tap page=%d detail=%d kind=%d x=%d y=%d op=%d", id(page), ds, kind, x, y, id(ui_op));
+                if (id(ui_op) >= 0) {
+                  id(flash_op) = id(ui_op);
+                  id(flash_ms) = millis();
+                }
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) >= 0 && id(ui_op) < 10;'
+                then:
+                  - script.execute:
+                      id: slot_cmd
+                      op: !lambda 'return id(ui_op);'
+                  - script.execute: redraw_late
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) >= 10 && id(ui_op) < 20;'
+                then:
+                  - script.execute: fav_play
+                  - script.execute: redraw_late
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) == 20;'
+                then:
+                  - script.execute: sleep_cycle
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) == 30;'
+                then:
+                  - script.execute: alarm_dismiss
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) == 31;'
+                then:
+                  - script.execute: alarm_snooze
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) == 60;'
+                then:
+                  - homeassistant.event:
+                      event: esphome.puck_door_open
+                      data:
+                        device: ${name}
+                  - lambda: id(door_show) = false;
+                  - script.stop: door_guard
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) == 61;'
+                then:
+                  - lambda: id(door_show) = false;
+                  - script.stop: door_guard
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) == 62;'
+                then:
+                  - select.set:
+                      id: sel_sleep
+                      option: Oprit
+            - if:
+                condition:
+                  lambda: 'return id(ui_op) >= 40 && id(ui_op) <= 44;'
+                then:
+                  - script.execute:
+                      id: alarm_adjust
+                      op: !lambda 'return id(ui_op);'
+                  - script.execute: redraw_late
+            - component.update: lcd
+      - script.execute: activity
+
+# ================= VARIABILE =================
+globals:
+  - {id: view, type: int, restore_value: false, initial_value: "0"}   # 0 = pagini, 2 = standby
+  - {id: page, type: int, restore_value: false, initial_value: "0"}
+  - {id: theme, type: int, restore_value: false, initial_value: "0"}
+  - {id: tx0, type: int, restore_value: false, initial_value: "0"}
+  - {id: ty0, type: int, restore_value: false, initial_value: "0"}
+  - {id: tx, type: int, restore_value: false, initial_value: "0"}
+  - {id: ty, type: int, restore_value: false, initial_value: "0"}
+  - {id: touching, type: bool, restore_value: false, initial_value: "false"}
+  - {id: ignore_rel, type: bool, restore_value: false, initial_value: "false"}
+  - {id: ui_op, type: int, restore_value: false, initial_value: "-1"}
+  - {id: ui_val, type: float, restore_value: false, initial_value: "0"}
+  - {id: flash_op, type: int, restore_value: false, initial_value: "-1"}
+  - {id: flash_ms, type: uint32_t, restore_value: false, initial_value: "0"}
+  - {id: cmd_mode, type: int, restore_value: false, initial_value: "-1"}
+  - {id: cmd_val, type: float, restore_value: false, initial_value: "0"}
+  - {id: push_changed, type: bool, restore_value: false, initial_value: "false"}
+  - {id: last_push_ms, type: uint32_t, restore_value: false, initial_value: "0"}
+  - {id: api_up, type: bool, restore_value: false, initial_value: "false"}
+  - {id: va_phase, type: int, restore_value: false, initial_value: "0"}   # 0 = liber, 1 = ascult, 2 = gandesc, 3 = raspund, 4 = eroare
+  - {id: va_frame, type: int, restore_value: false, initial_value: "0"}
+  - {id: fav_idx, type: int, restore_value: false, initial_value: "0"}
+  - {id: fav_ty1, type: int, restore_value: false, initial_value: "0"}
+  - {id: fav_ty2, type: int, restore_value: false, initial_value: "0"}
+  - {id: fav_ty3, type: int, restore_value: false, initial_value: "0"}
+  - {id: fav_ty4, type: int, restore_value: false, initial_value: "1"}
+  - {id: sleep_left, type: int, restore_value: false, initial_value: "0"}   # secunde ramase la sleep timer (0 = oprit)
+  - {id: sleep_pub, type: int, restore_value: false, initial_value: "0"}
+  - {id: alarm_ringing, type: bool, restore_value: false, initial_value: "false"}
+  - {id: alarm_beep, type: bool, restore_value: false, initial_value: "true"}
+  - {id: alarm_snd_idx, type: int, restore_value: false, initial_value: "0"}
+  - {id: sb_style, type: int, restore_value: false, initial_value: "0"}   # standby: 0 = analog, 1 = digital
+  - {id: art_ok, type: bool, restore_value: false, initial_value: "false"}   # true cand poza de album e descarcata si poate fi afisata
+  - {id: det_slot, type: int, restore_value: false, initial_value: "-1"}   # slotul deschis in ecranul de detaliu (-1 = niciunul)
+  - {id: cmd_slot, type: int, restore_value: false, initial_value: "-1"}   # slotul tinta pentru comenzi date de pe pagina Carduri
+  - {id: door_show, type: bool, restore_value: false, initial_value: "false"}   # fereastra soneriei afisata
+  - {id: door_ok, type: bool, restore_value: false, initial_value: "false"}   # poza soneriei descarcata
+  - {id: fade_active, type: bool, restore_value: false, initial_value: "false"}   # scade volumul inainte de oprirea muzicii
+  - {id: fade_v0, type: float, restore_value: false, initial_value: "-1"}   # volumul de dinainte de fade
+  - {id: fade_ms, type: uint32_t, restore_value: false, initial_value: "0"}
+  - {id: alarm_ramp, type: bool, restore_value: false, initial_value: "false"}   # alarma graduala in desfasurare
+  - {id: alarm_steps, type: int, restore_value: false, initial_value: "0"}
+  - {id: alarm_lvl, type: int, restore_value: false, initial_value: "0"}   # nivelul de trezire 0..100
+  - {id: alarm_vol, type: float, restore_value: false, initial_value: "-1"}
+  - {id: alarm_snd, type: bool, restore_value: false, initial_value: "false"}   # sunetul alarmei a pornit
+  - {id: alarm_prev_vol, type: float, restore_value: false, initial_value: "NAN"}
+  - {id: act_bright, type: float, restore_value: false, initial_value: "1.0"}   # luminozitate activa curenta (zi / noapte)
+  - {id: sb_bright, type: float, restore_value: false, initial_value: "0.15"}   # luminozitate standby curenta (zi / noapte)
+  - {id: night_now, type: bool, restore_value: false, initial_value: "false"}
+  - {id: diag_vis, type: bool, restore_value: false, initial_value: "false"}
+  - id: cmd_entity
+    type: std::string
+    restore_value: false
+    initial_value: 'std::string("")'
+  - id: fav_media
+    type: std::string
+    restore_value: false
+    initial_value: 'std::string("")'
+  - id: fav_type
+    type: std::string
+    restore_value: false
+    initial_value: 'std::string("radio")'
+
+# ================= FONTURI =================
+font:
+  - file:
+      type: web
+      url: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
+    id: font_mdi
+    size: 56
+    glyphs: &mdi_glyphs [
+      "\U000F0335", "\U000F0425", "\U000F0502", "\U000F0210", "\U000F033E",
+      "\U000F050F", "\U000F0387", "\U000F02DC", "\U000F06D9", "\U000F01F8",
+      "\U000F00AC", "\U000F0238"
+    ]
+  - file:
+      type: web
+      url: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
+    id: font_mdi_mid
+    size: 72
+    glyphs: *mdi_glyphs
+  - file:
+      type: web
+      url: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
+    id: font_mdi_big
+    size: 96
+    glyphs: *mdi_glyphs
+  # pictograme de vreme pentru ceasul analogic din standby
+  - file:
+      type: web
+      url: https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf
+    id: font_wx
+    size: 40
+    glyphs: [
+      "\U000F0590", "\U000F0591", "\U000F0592", "\U000F0593", "\U000F0594",
+      "\U000F0595", "\U000F0596", "\U000F0597", "\U000F0598", "\U000F0599",
+      "\U000F059D", "\U000F067E", "\U000F067F"
+    ]
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 400
+    id: font_label
+    size: 14
+    glyphsets: [GF_Latin_Core]
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 500
+    id: font_art
+    size: 20
+    glyphsets: [GF_Latin_Core]
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 500
+    id: font_value
+    size: 30
+    glyphsets: [GF_Latin_Core]
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 500
+    id: font_clock
+    size: 64
+    glyphs: "0123456789:-"
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 400
+    id: font_date
+    size: 20
+    glyphsets: [GF_Latin_Core]
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 500
+    id: font_dial
+    size: 58
+    glyphs: "0123456789.-%"
+  # cifrele 12, 3, 6, 9 de pe cadranul analogic
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 600
+    id: font_num
+    size: 28
+    glyphs: "0123456789"
+
+# ================= TIMERE =================
+interval:
+  # animatia Jarvis cat timp asistentul asculta, se gandeste sau raspunde, si pulsul ecranului de alarma
+  - interval: 120ms
+    then:
+      - if:
+          condition:
+            lambda: 'return (id(va_phase) >= 1 && id(va_phase) <= 3) || id(alarm_ringing);'
+          then:
+            - lambda: id(va_frame) = id(va_frame) + 1;
+            - component.update: lcd
+  # timpul melodiei curge cat timp se reda muzica si pagina de media e deschisa
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              if (id(view) != 0 || id(va_phase) > 0) return false;
+              int s = id(det_slot);
+              if (s < 0 || s > 7) return false;
+              int *a_kd[8] = {&id(kd_1), &id(kd_2), &id(kd_3), &id(kd_4), &id(kd_5), &id(kd_6), &id(kd_7), &id(kd_8)};
+              text_sensor::TextSensor *a_st[8] = {id(st_1), id(st_2), id(st_3), id(st_4), id(st_5), id(st_6), id(st_7), id(st_8)};
+              return *a_kd[s] == 3 && a_st[s]->state == "playing";
+          then:
+            - component.update: lcd
+  # ceas analogic in standby: secundarul se misca, deci redeseneaza o data pe secunda
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(view) == 2 && id(sb_style) == 0 && !id(alarm_ringing) && id(va_phase) == 0;'
+          then:
+            - component.update: lcd
+  # sleep timer: numara secundele; la zero opreste muzica
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(sleep_left) > 0;'
+          then:
+            - lambda: |-
+                id(sleep_left) = id(sleep_left) - 1;
+                int m = (id(sleep_left) + 59) / 60;
+                if (m != id(sleep_pub)) {
+                  id(sleep_pub) = m;
+                  id(sleep_rem)->publish_state(m);
+                }
+            - if:
+                condition:
+                  lambda: 'return id(num_fade)->state > 0 && id(sleep_left) > 0 && id(sleep_left) == (int) id(num_fade)->state;'
+                then:
+                  - script.execute: sleep_fade
+            - if:
+                condition:
+                  lambda: 'return id(sleep_left) == 0;'
+                then:
+                  - script.execute: sleep_fire
+                else:
+                  - if:
+                      condition:
+                        lambda: 'return id(sleep_left) % 60 == 0;'
+                      then:
+                        - script.execute: redraw
+  # verifica din 2 in 2 secunde daca Home Assistant e conectat (nu se mai lasa pacalit de alti clienti, ex. fereastra de Logs)
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            api.connected:
+              state_subscription_only: true
+          then:
+            - if:
+                condition:
+                  lambda: 'return !id(api_up);'
+                then:
+                  - lambda: id(api_up) = true;
+                  - script.execute: sync_ha
+                  - script.execute: redraw
+          else:
+            - if:
+                condition:
+                  lambda: 'return id(api_up);'
+                then:
+                  - lambda: id(api_up) = false;
+                  - script.execute: redraw
+  # cere periodic starile entitatilor de la Home Assistant
+  - interval: 5s
+    then:
+      - script.execute: sync_ha
+  # mod noapte: recalculeaza luminozitatea dupa ora
+  - interval: 20s
+    then:
+      - script.execute: bright_update
+  # pagina de diagnostic se reimprospateaza cat e deschisa; la fel si ecranul de scadere a volumului
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            lambda: 'return (id(diag_vis) && id(view) == 0) || (id(fade_active) && id(view) == 0);'
+          then:
+            - component.update: lcd
+
+# ================= SCRIPTURI =================
+script:
+  # reafisare cu mica intarziere (evita zeci de redesenari la pornire)
+  - id: redraw
+    mode: restart
+    then:
+      - delay: 100ms
+      - component.update: lcd
+
+  # reafisare dupa ce se termina clipirea butonului atins
+  - id: redraw_late
+    mode: restart
+    then:
+      - delay: 380ms
+      - component.update: lcd
+
+  # ===== ALARMA =====
+  # verifica in fiecare minut (la secunda 0) daca e ora alarmei
+  - id: alarm_check
+    mode: single
+    then:
+      - if:
+          condition:
+            lambda: |-
+              if (!id(alarm_on)->state) return false;
+              if (id(alarm_ringing)) return false;
+              auto t = id(ha_time)->now();
+              if (!t.is_valid()) t = id(sntp_time)->now();
+              if (!t.is_valid()) return false;
+              if (id(alarm_wd)->state) {
+                if (t.day_of_week < 2 || t.day_of_week > 6) return false;
+              }
+              return t.hour == (int) id(alarm_h)->state && t.minute == (int) id(alarm_min)->state;
+          then:
+            - script.execute: alarm_ring
+
+  # alarma suna: aprinde ecranul, apoi (daca e setat) lumina creste, apoi volumul, apoi suna complet; maximum 5 minute dupa trezire
+  - id: alarm_ring
+    mode: restart
+    then:
+      - lambda: |-
+          id(alarm_ringing) = true;
+          id(view) = 0;
+          bool use_beep = (id(alarm_snd_idx) == 0) || !id(api_up);
+          if (!use_beep) {
+            int i = id(alarm_snd_idx) - 1;
+            if (i < 0 || i > 3) {
+              use_beep = true;
+            } else {
+              text::Text *a_fc[4] = {id(fav_c1), id(fav_c2), id(fav_c3), id(fav_c4)};
+              if (a_fc[i]->state.empty()) use_beep = true;
+              else id(fav_idx) = i;
+            }
+          }
+          id(alarm_beep) = use_beep;
+          id(alarm_steps) = ((int) id(alarm_ramp_min)->state) * 6;
+          id(alarm_ramp) = id(alarm_steps) > 0;
+          id(alarm_lvl) = 0;
+          id(alarm_snd) = false;
+          id(alarm_vol) = -1;
+          id(alarm_prev_vol) = NAN;
+          if (id(alarm_ramp) && use_beep) id(alarm_prev_vol) = id(external_media_player)->volume;
+      - light.turn_on:
+          id: backlight
+          brightness: !lambda 'return id(act_bright);'
+      - component.update: lcd
+      # lumina de trezire porneste de la 1%
+      - if:
+          condition:
+            lambda: 'return id(alarm_ramp) && id(api_up) && !id(alarm_light)->state.empty();'
+          then:
+            - homeassistant.action:
+                action: light.turn_on
+                data:
+                  entity_id: !lambda 'return id(alarm_light)->state;'
+                  brightness_pct: "1"
+      # trezire graduala: un pas la 10 s; prima jumatate doar lumina, a doua jumatate lumina + sunet cu volum crescator
+      - repeat:
+          count: !lambda 'return id(alarm_steps);'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(alarm_ringing);'
+                then:
+                  - lambda: |-
+                      int n = id(alarm_steps);
+                      int half = n / 2;
+                      int st = (int) iteration + 1;
+                      id(alarm_lvl) = st * 100 / n;
+                      if (st > half) {
+                        id(alarm_vol) = (id(alarm_vol_max)->state / 100.0f) * (float) (st - half) / (float) (n - half);
+                      } else {
+                        id(alarm_vol) = -1;
+                      }
+                  - if:
+                      condition:
+                        lambda: 'return id(api_up) && !id(alarm_light)->state.empty();'
+                      then:
+                        - homeassistant.action:
+                            action: light.turn_on
+                            data:
+                              entity_id: !lambda 'return id(alarm_light)->state;'
+                              brightness_pct: !lambda 'return str_sprintf("%d", id(alarm_lvl));'
+                              transition: "10"
+                  - if:
+                      condition:
+                        lambda: 'return id(alarm_vol) >= 0 && !id(alarm_beep) && id(api_up);'
+                      then:
+                        - homeassistant.action:
+                            action: media_player.volume_set
+                            data:
+                              entity_id: !lambda 'return id(fav_player)->state;'
+                              volume_level: !lambda 'return str_sprintf("%.2f", id(alarm_vol));'
+                        - if:
+                            condition:
+                              lambda: 'return !id(alarm_snd);'
+                            then:
+                              - lambda: id(alarm_snd) = true;
+                              - script.execute: fav_play
+                  - if:
+                      condition:
+                        lambda: 'return id(alarm_vol) >= 0 && id(alarm_beep);'
+                      then:
+                        - media_player.volume_set:
+                            id: external_media_player
+                            volume: !lambda 'return id(alarm_vol);'
+                        - media_player.speaker.play_on_device_media_file:
+                            media_file: timer_finished_sound
+                            announcement: true
+                  - component.update: lcd
+                  - delay: 10s
+      - lambda: |-
+          id(alarm_ramp) = false;
+          id(alarm_lvl) = 100;
+      # fara trezire graduala (sau fara sunet pornit inca): porneste favoritul acum
+      - if:
+          condition:
+            lambda: 'return !id(alarm_beep) && !id(alarm_snd);'
+          then:
+            - lambda: id(alarm_snd) = true;
+            - script.execute: fav_play
+      - repeat:
+          count: 75
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(alarm_ringing);'
+                then:
+                  - light.turn_on:
+                      id: led
+                      red: 100%
+                      green: 60%
+                      blue: 0%
+                      brightness: 60%
+                  - if:
+                      condition:
+                        lambda: 'return id(alarm_beep);'
+                      then:
+                        - media_player.speaker.play_on_device_media_file:
+                            media_file: timer_finished_sound
+                            announcement: true
+                  - delay: 2s
+                  - light.turn_off: led
+                  - delay: 2s
+      - script.execute: alarm_dismiss
+
+  # Stop: opreste sunetul, pune muzica pe pauza, scoate ecranul de alarma
+  - id: alarm_dismiss
+    mode: single
+    then:
+      - script.stop: alarm_ring
+      - script.stop: alarm_snooze_wait
+      - lambda: |-
+          id(alarm_ringing) = false;
+          id(alarm_ramp) = false;
+          if (!std::isnan(id(alarm_prev_vol))) {
+            auto vc = id(external_media_player)->make_call();
+            vc.set_volume(id(alarm_prev_vol));
+            vc.perform();
+            id(alarm_prev_vol) = NAN;
+          }
+      - light.turn_off: led
+      - if:
+          condition:
+            lambda: 'return !id(alarm_beep) && id(api_up);'
+          then:
+            - homeassistant.action:
+                action: media_player.media_pause
+                data:
+                  entity_id: !lambda 'return id(fav_player)->state;'
+      - script.execute: activity
+      - component.update: lcd
+
+  # Amana: opreste sunetul acum si reia alarma dupa numarul de minute setat
+  - id: alarm_snooze
+    mode: single
+    then:
+      - script.stop: alarm_ring
+      - lambda: |-
+          id(alarm_ringing) = false;
+          id(alarm_ramp) = false;
+          if (!std::isnan(id(alarm_prev_vol))) {
+            auto vc = id(external_media_player)->make_call();
+            vc.set_volume(id(alarm_prev_vol));
+            vc.perform();
+            id(alarm_prev_vol) = NAN;
+          }
+      - light.turn_off: led
+      - if:
+          condition:
+            lambda: 'return !id(alarm_beep) && id(api_up);'
+          then:
+            - homeassistant.action:
+                action: media_player.media_pause
+                data:
+                  entity_id: !lambda 'return id(fav_player)->state;'
+      - script.execute: activity
+      - component.update: lcd
+      - script.execute: alarm_snooze_wait
+
+  - id: alarm_snooze_wait
+    mode: restart
+    then:
+      - delay: !lambda 'return (uint32_t) (id(alarm_snooze_min)->state * 60000.0f);'
+      - script.execute: alarm_ring
+
+  # reglaje de pe pagina Alarma: 40 ora+, 41 ora-, 42 minut+ (din 5 in 5), 43 minut-, 44 pornit/oprit
+  - id: alarm_adjust
+    mode: queued
+    parameters:
+      op: int
+    then:
+      - lambda: |-
+          int h = (int) id(alarm_h)->state;
+          int m = (int) id(alarm_min)->state;
+          if (op == 40) h = (h + 1) % 24;
+          if (op == 41) h = (h + 23) % 24;
+          if (op == 42) m = (((m / 5) + 1) * 5) % 60;
+          if (op == 43) {
+            m = (((m + 4) / 5) - 1) * 5;
+            if (m < 0) m += 60;
+          }
+          if (op >= 40 && op <= 43) {
+            auto ch = id(alarm_h)->make_call();
+            ch.set_value(h);
+            ch.perform();
+            auto cm = id(alarm_min)->make_call();
+            cm.set_value(m);
+            cm.perform();
+          }
+      - if:
+          condition:
+            lambda: 'return op == 44;'
+          then:
+            - switch.toggle: alarm_on
+
+  # sleep timer: fiecare atingere pe luna trece la urmatoarea durata (Oprit, 15, 30, 45, 60, 90 min)
+  - id: sleep_cycle
+    mode: restart
+    then:
+      - select.next:
+          id: sel_sleep
+          cycle: true
+
+  # sleep timer: cu <fade> secunde inainte de sfarsit, volumul scade lin in 10 trepte (doar daca playerul e unul din paginile Puck-ului)
+  - id: sleep_fade
+    mode: single
+    then:
+      - lambda: |-
+          id(fade_v0) = -1;
+          std::string pl = id(fav_player)->state;
+          std::string *a_en[8] = {&id(en_1), &id(en_2), &id(en_3), &id(en_4), &id(en_5), &id(en_6), &id(en_7), &id(en_8)};
+          int *a_kd[8] = {&id(kd_1), &id(kd_2), &id(kd_3), &id(kd_4), &id(kd_5), &id(kd_6), &id(kd_7), &id(kd_8)};
+          sensor::Sensor *a_vo[8] = {id(vo_1), id(vo_2), id(vo_3), id(vo_4), id(vo_5), id(vo_6), id(vo_7), id(vo_8)};
+          for (int i = 0; i < 8; i++) {
+            if (*a_kd[i] == 3 && *a_en[i] == pl) {
+              float v = a_vo[i]->state;
+              if (!std::isnan(v) && v > 0.02f) id(fade_v0) = v;
+            }
+          }
+          id(fade_active) = id(fade_v0) > 0;
+          id(fade_ms) = millis();
+      - if:
+          condition:
+            lambda: 'return id(fade_active);'
+          then:
+            - component.update: lcd
+            - repeat:
+                count: 10
+                then:
+                  - homeassistant.action:
+                      action: media_player.volume_set
+                      data:
+                        entity_id: !lambda 'return id(fav_player)->state;'
+                        volume_level: !lambda 'return str_sprintf("%.2f", id(fade_v0) * (9 - (int) iteration) / 10.0f);'
+                  - delay: !lambda 'return (uint32_t) (id(num_fade)->state * 100.0f);'
+
+  # sleep timer: cand expira, pune muzica pe pauza pe playerul din "Favorite - Player" si readuce volumul de dinainte
+  - id: sleep_fire
+    mode: single
+    then:
+      - homeassistant.action:
+          action: media_player.media_pause
+          data:
+            entity_id: !lambda 'return id(fav_player)->state;'
+      - if:
+          condition:
+            lambda: 'return id(fade_active) && id(fade_v0) > 0;'
+          then:
+            - delay: 2s
+            - homeassistant.action:
+                action: media_player.volume_set
+                data:
+                  entity_id: !lambda 'return id(fav_player)->state;'
+                  volume_level: !lambda 'return str_sprintf("%.2f", id(fade_v0));'
+      - lambda: id(fade_active) = false;
+      - select.set:
+          id: sel_sleep
+          option: Oprit
+
+  # pagina de start: Carduri
+  - id: go_home
+    mode: single
+    then:
+      - lambda: |-
+          id(page) = 0;
+          id(det_slot) = -1;
+      - component.update: lcd
+
+  # mod noapte: dupa ora, alege luminozitatea activa si cea de standby
+  - id: bright_update
+    mode: restart
+    then:
+      - lambda: |-
+          auto t = id(ha_time)->now();
+          if (!t.is_valid()) t = id(sntp_time)->now();
+          bool night = false;
+          if (t.is_valid() && id(night_on)->state) {
+            int h = t.hour;
+            int a = (int) id(night_from)->state;
+            int b = (int) id(night_to)->state;
+            if (a < b) night = (h >= a && h < b);
+            else if (a > b) night = (h >= a || h < b);
+          }
+          id(night_now) = night;
+          float act = id(num_bright)->state / 100.0f;
+          float sb = id(num_dim)->state / 100.0f;
+          if (night) {
+            float na = id(night_act)->state / 100.0f;
+            float nd = id(night_dim)->state / 100.0f;
+            if (na < act) act = na;
+            if (nd < sb) sb = nd;
+          }
+          id(act_bright) = act;
+          id(sb_bright) = sb;
+      - if:
+          condition:
+            lambda: 'return id(view) == 2 && !id(alarm_ringing);'
+          then:
+            - light.turn_on:
+                id: backlight
+                brightness: !lambda 'return id(sb_bright);'
+
+  # sonerie: ascunde fereastra dupa 30 s daca nu s-a atins nimic
+  - id: door_guard
+    mode: restart
+    then:
+      - delay: 30s
+      - lambda: id(door_show) = false;
+      - component.update: lcd
+
+  # trimite catre Home Assistant lista de entitati a acestui Puck; automatizarea raspunde cu starile lor
+  - id: sync_ha
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: 'return id(api_up);'
+          then:
+            - homeassistant.event:
+                event: esphome.puck_sync
+                data:
+                  device: ${name}
+                  e1: !lambda 'return id(en_1);'
+                  e2: !lambda 'return id(en_2);'
+                  e3: !lambda 'return id(en_3);'
+                  e4: !lambda 'return id(en_4);'
+                  e5: !lambda 'return id(en_5);'
+                  e6: !lambda 'return id(en_6);'
+                  e7: !lambda 'return id(en_7);'
+                  e8: !lambda 'return id(en_8);'
+
+  # pornește un favorit (radio / playlist) din Music Assistant pe boxa aleasa
+  - id: fav_play
+    mode: queued
+    then:
+      - lambda: |-
+          int i = id(fav_idx);
+          id(cmd_mode) = -1;
+          if (i < 0 || i > 3) return;
+          text::Text *a_fc[4] = {id(fav_c1), id(fav_c2), id(fav_c3), id(fav_c4)};
+          int *a_ft[4] = {&id(fav_ty1), &id(fav_ty2), &id(fav_ty3), &id(fav_ty4)};
+          static const char *FT[5] = {"radio", "playlist", "album", "track", "artist"};
+          std::string mid = a_fc[i]->state;
+          std::string pl = id(fav_player)->state;
+          int t = *a_ft[i];
+          if (t < 0 || t > 4) t = 0;
+          if (mid.empty() || pl.empty()) return;
+          id(cmd_entity) = pl;
+          id(fav_media) = mid;
+          id(fav_type) = FT[t];
+          id(cmd_mode) = 8;
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 8;'
+          then:
+            - homeassistant.action:
+                action: music_assistant.play_media
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+                  media_id: !lambda 'return id(fav_media);'
+                  media_type: !lambda 'return id(fav_type);'
+                  enqueue: play
+
+  # siguranta: daca asistentul vocal ramane blocat pe ecran, il scoate dupa 30 s
+  - id: va_guard
+    mode: restart
+    then:
+      - delay: 30s
+      - if:
+          condition:
+            lambda: 'return id(va_phase) != 0;'
+          then:
+            - lambda: id(va_phase) = 0;
+            - light.turn_off: led
+            - script.execute: redraw
+
+  # dupa timpul setat fara atingeri intra in standby (ceas, ecran estompat); nu intra cat suna alarma
+  - id: activity
+    mode: restart
+    then:
+      - delay: !lambda 'return (uint32_t) (id(num_standby)->state * 1000.0f);'
+      - if:
+          condition:
+            lambda: 'return !id(alarm_ringing);'
+          then:
+            - lambda: |-
+                id(view) = 2;
+                id(page) = 0;
+                id(det_slot) = -1;
+            - light.turn_on:
+                id: backlight
+                brightness: !lambda 'return id(sb_bright);'
+            - component.update: lcd
+
+  # op: 0 = comuta, 1 = plus, 2 = minus, 3 = anterior, 4 = play/pauza, 5 = urmator, 7 = volum absolut
+  - id: slot_cmd
+    mode: queued
+    parameters:
+      op: int
+    then:
+      - lambda: |-
+          int s = (id(cmd_slot) >= 0) ? id(cmd_slot) : id(det_slot);
+          id(cmd_slot) = -1;
+          id(cmd_mode) = -1;
+          if (s < 0 || s > 7) return;
+          std::string *a_en[8] = {&id(en_1), &id(en_2), &id(en_3), &id(en_4), &id(en_5), &id(en_6), &id(en_7), &id(en_8)};
+          int *a_kd[8] = {&id(kd_1), &id(kd_2), &id(kd_3), &id(kd_4), &id(kd_5), &id(kd_6), &id(kd_7), &id(kd_8)};
+          text_sensor::TextSensor *a_st[8] = {id(st_1), id(st_2), id(st_3), id(st_4), id(st_5), id(st_6), id(st_7), id(st_8)};
+          sensor::Sensor *a_br[8] = {id(br_1), id(br_2), id(br_3), id(br_4), id(br_5), id(br_6), id(br_7), id(br_8)};
+          sensor::Sensor *a_tg[8] = {id(tg_1), id(tg_2), id(tg_3), id(tg_4), id(tg_5), id(tg_6), id(tg_7), id(tg_8)};
+          sensor::Sensor *a_vo[8] = {id(vo_1), id(vo_2), id(vo_3), id(vo_4), id(vo_5), id(vo_6), id(vo_7), id(vo_8)};
+          id(cmd_entity) = *a_en[s];
+          int kind = *a_kd[s];
+          if (kind == 4) return;   // senzorii nu se comanda
+          if (kind == 3) {
+            if (op == 0 || op == 4) {
+              bool playing_now = (a_st[s]->state == "playing");
+              a_st[s]->publish_state(playing_now ? "paused" : "playing");
+              id(cmd_mode) = playing_now ? 7 : 4;
+              return;
+            }
+            if (op == 5) { id(cmd_mode) = 5; return; }
+            if (op == 3) { id(cmd_mode) = 6; return; }
+            float v = a_vo[s]->state;
+            if (op == 7) {
+              v = id(ui_val);
+            } else {
+              if (std::isnan(v)) v = 0.3f;
+              v += (op == 1) ? 0.05f : -0.05f;
+            }
+            if (v < 0.0f) v = 0.0f;
+            if (v > 1.0f) v = 1.0f;
+            v = roundf(v * 100.0f) / 100.0f;
+            a_vo[s]->publish_state(v);
+            id(cmd_val) = v;
+            id(cmd_mode) = 3;
+            return;
+          }
+          if (op == 0 || kind == 0) {
+            id(cmd_mode) = 0;
+            return;
+          }
+          if (kind == 1) {
+            float b = a_br[s]->state;
+            int pct = std::isnan(b) ? 0 : (int) roundf(b * 100.0f / 255.0f);
+            pct += (op == 1) ? 10 : -10;
+            if (pct < 1) pct = 1;
+            if (pct > 100) pct = 100;
+            id(cmd_val) = pct;
+            a_br[s]->publish_state(pct * 255.0f / 100.0f);
+            id(cmd_mode) = 1;
+          } else {
+            float t = a_tg[s]->state;
+            if (std::isnan(t)) t = 22.0f;
+            t += (op == 1) ? 0.5f : -0.5f;
+            if (t < 16.0f) t = 16.0f;
+            if (t > 30.0f) t = 30.0f;
+            id(cmd_val) = t;
+            a_tg[s]->publish_state(t);
+            id(cmd_mode) = 2;
+          }
+      - script.execute: redraw
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 0;'
+          then:
+            - homeassistant.action:
+                action: homeassistant.toggle
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 1;'
+          then:
+            - homeassistant.action:
+                action: light.turn_on
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+                  brightness_pct: !lambda 'return str_sprintf("%d", (int) id(cmd_val));'
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 2;'
+          then:
+            - homeassistant.action:
+                action: climate.set_temperature
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+                  temperature: !lambda 'return str_sprintf("%.1f", id(cmd_val));'
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 3;'
+          then:
+            - homeassistant.action:
+                action: media_player.volume_set
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+                  volume_level: !lambda 'return str_sprintf("%.2f", id(cmd_val));'
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 4;'
+          then:
+            - homeassistant.action:
+                action: media_player.media_play
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 7;'
+          then:
+            - homeassistant.action:
+                action: media_player.media_pause
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 5;'
+          then:
+            - homeassistant.action:
+                action: media_player.media_next_track
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+      - if:
+          condition:
+            lambda: 'return id(cmd_mode) == 6;'
+          then:
+            - homeassistant.action:
+                action: media_player.media_previous_track
+                data:
+                  entity_id: !lambda 'return id(cmd_entity);'
+      # cere Home Assistant sa trimita imediat starea noua
+      - delay: 600ms
+      - script.execute: sync_ha
+
+# ================= ECRANUL (rotit 180 grade) =================
+display:
+  - platform: ili9xxx
+    id: lcd
+    model: GC9A01A
+    invert_colors: true
+    data_rate: 40MHz
+    cs_pin: GPIO5
+    dc_pin: GPIO47
+    reset_pin: GPIO38
+    rotation: 180
+    dimensions:
+      width: 240
+      height: 240
+    update_interval: never
+    lambda: |-
+      it.fill(Color::BLACK);
+      static const char *ICONS[12] = {
+        "\U000F0335", "\U000F0425", "\U000F0502", "\U000F0210", "\U000F033E",
+        "\U000F050F", "\U000F0387", "\U000F02DC", "\U000F06D9", "\U000F01F8",
+        "\U000F00AC", "\U000F0238"
+      };
+      // culoarea fiecarei iconite: Bec, Power, TV, Ventilator, Incuietoare, Termostat,
+      // Muzica, Acasa, Garaj, AC, Jaluzele, Incalzire
+      static const uint32_t ICC[12] = {
+        0xFFC107, 0xFF5252, 0x42A5F5, 0x4DD0E1, 0xEF5350, 0xFF7043,
+        0xAB47BC, 0x66BB6A, 0xFFA726, 0x29B6F6, 0xD7B98E, 0xFF5722
+      };
+      // teme: Chihlimbar, Albastru, Verde, Rosu, Violet, Alb
+      static const uint32_t ACC[6] = {0xFFC107, 0x42A5F5, 0x66BB6A, 0xEF5350, 0xAB47BC, 0xECEFF1};
+      static const uint32_t ACB[6] = {0x4A3B00, 0x0D2B4A, 0x14381A, 0x4A1614, 0x30143A, 0x3A3F42};
+      int th = id(theme);
+      if (th < 0 || th > 5) th = 0;
+      Color accent = Color(ACC[th]);
+      Color accent_bg = Color(ACB[th]);
+      Color grey_bg = Color(0x262626);
+
+      std::string *a_nm[8] = {&id(nm_1), &id(nm_2), &id(nm_3), &id(nm_4), &id(nm_5), &id(nm_6), &id(nm_7), &id(nm_8)};
+      int *a_ic[8] = {&id(ic_1), &id(ic_2), &id(ic_3), &id(ic_4), &id(ic_5), &id(ic_6), &id(ic_7), &id(ic_8)};
+      int *a_kd[8] = {&id(kd_1), &id(kd_2), &id(kd_3), &id(kd_4), &id(kd_5), &id(kd_6), &id(kd_7), &id(kd_8)};
+      text_sensor::TextSensor *a_st[8] = {id(st_1), id(st_2), id(st_3), id(st_4), id(st_5), id(st_6), id(st_7), id(st_8)};
+      text_sensor::TextSensor *a_ti[8] = {id(ti_1), id(ti_2), id(ti_3), id(ti_4), id(ti_5), id(ti_6), id(ti_7), id(ti_8)};
+      sensor::Sensor *a_br[8] = {id(br_1), id(br_2), id(br_3), id(br_4), id(br_5), id(br_6), id(br_7), id(br_8)};
+      sensor::Sensor *a_tg[8] = {id(tg_1), id(tg_2), id(tg_3), id(tg_4), id(tg_5), id(tg_6), id(tg_7), id(tg_8)};
+      sensor::Sensor *a_cu[8] = {id(cu_1), id(cu_2), id(cu_3), id(cu_4), id(cu_5), id(cu_6), id(cu_7), id(cu_8)};
+      sensor::Sensor *a_vo[8] = {id(vo_1), id(vo_2), id(vo_3), id(vo_4), id(vo_5), id(vo_6), id(vo_7), id(vo_8)};
+      sensor::Sensor *a_po[8] = {id(po_1), id(po_2), id(po_3), id(po_4), id(po_5), id(po_6), id(po_7), id(po_8)};
+      sensor::Sensor *a_du[8] = {id(du_1), id(du_2), id(du_3), id(du_4), id(du_5), id(du_6), id(du_7), id(du_8)};
+      number::Number *a_mn[8] = {id(num_min_1), id(num_min_2), id(num_min_3), id(num_min_4), id(num_min_5), id(num_min_6), id(num_min_7), id(num_min_8)};
+      number::Number *a_mx[8] = {id(num_max_1), id(num_max_2), id(num_max_3), id(num_max_4), id(num_max_5), id(num_max_6), id(num_max_7), id(num_max_8)};
+      auto is_on = [&](int s) -> bool {
+        std::string v = a_st[s]->state;
+        int k = *a_kd[s];
+        if (k == 3) return v == "playing" || v == "buffering" || v == "on";
+        if (k == 4) return !(v.empty() || v == "unavailable" || v == "unknown");
+        return !(v.empty() || v == "off" || v == "unavailable" || v == "unknown" || v == "closed" || v == "idle" || v == "standby");
+      };
+      // valoare numerica de senzor, cu o zecimala ("--" daca nu e numar)
+      auto fmt_val = [](const std::string &st, char *out, size_t n) {
+        char *end = nullptr;
+        float v = strtof(st.c_str(), &end);
+        if (st.empty() || end == st.c_str()) {
+          snprintf(out, n, "--");
+          return;
+        }
+        if (fabsf(v) >= 100.0f) snprintf(out, n, "%.0f", v);
+        else snprintf(out, n, "%.1f", v);
+      };
+      auto utf8_take = [](const std::string &str, size_t start, size_t maxb) -> std::string {
+        if (start >= str.size()) return std::string("");
+        size_t end = start + maxb;
+        if (end >= str.size()) return str.substr(start);
+        while (end > start && (((unsigned char) str[end]) & 0xC0) == 0x80) end--;
+        return str.substr(start, end - start);
+      };
+      auto tri_r = [&](int cx, int cy, int h, Color c) {
+        for (int i = 0; i < h; i++) {
+          int len = h - i;
+          it.vertical_line(cx - h / 2 + i, cy - len / 2, len, c);
+        }
+      };
+      auto tri_l = [&](int cx, int cy, int h, Color c) {
+        for (int i = 0; i < h; i++) {
+          int len = h - i;
+          it.vertical_line(cx + h / 2 - i, cy - len / 2, len, c);
+        }
+      };
+      // amestec intre doua culori (t = 0 -> a, t = 1 -> b)
+      auto mixc = [](Color a, Color b, float t) -> Color {
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        int r = (int) a.r + (int) (((int) b.r - (int) a.r) * t);
+        int g = (int) a.g + (int) (((int) b.g - (int) a.g) * t);
+        int bl = (int) a.b + (int) (((int) b.b - (int) a.b) * t);
+        return Color((uint8_t) r, (uint8_t) g, (uint8_t) bl);
+      };
+      // intuneca randurile y0..y1 ale imaginii de fundal (lvl 1 = aprox. 50%, lvl 2 = aprox. 75%), ca textul sa se citeasca
+      auto dim_rows = [&](int y0, int y1, int lvl) {
+        for (int yy = y0; yy < y1; yy++) {
+          for (int xx = 0; xx < 240; xx++) {
+            bool keep = (lvl == 1) ? (((xx + yy) & 1) == 0) : (((xx & 1) == 0) && ((yy & 1) == 0));
+            if (!keep) it.draw_pixel_at(xx, yy, Color::BLACK);
+          }
+        }
+      };
+      // scara de temperatura: 0 = albastru, 0.4 = cian, 0.6 = galben, 1 = rosu
+      auto tcol = [&](float f) -> Color {
+        if (f < 0.0f) f = 0.0f;
+        if (f > 1.0f) f = 1.0f;
+        Color c0 = Color(0x2F6BFF);
+        Color c1 = Color(0x35D0FF);
+        Color c2 = Color(0xFFD54F);
+        Color c3 = Color(0xFF3D3D);
+        if (f < 0.4f) return mixc(c0, c1, f / 0.4f);
+        if (f < 0.6f) return mixc(c1, c2, (f - 0.4f) / 0.2f);
+        return mixc(c2, c3, (f - 0.6f) / 0.4f);
+      };
+      // iconita colorata: plina cand e pornita, estompata (dar tot colorata) cand e oprita
+      auto icon_color = [&](int ic, bool on) -> Color {
+        Color base = Color(ICC[ic]);
+        return on ? base : mixc(base, Color(0x000000), 0.45f);
+      };
+      auto icon_bg = [&](int ic, bool on) -> Color {
+        Color base = Color(ICC[ic]);
+        return mixc(base, Color(0x000000), on ? 0.78f : 0.9f);
+      };
+      // Inel continuu: arc de 270 grade, gol jos, de la stanga-jos peste sus spre dreapta-jos.
+      // vmin..vmax = intervalul, lo..hi = partea aprinsa, mk = marcajul alb, cu = punctul mic (valoarea curenta)
+      // gm: 0 = culoare simpla
+      //     1 = degrade deschis -> inchis pe culoarea temei (galben deschis -> galben inchis la tema implicita)
+      //     2 = scara albastru-rosu (temperatura)
+      //     3 = scara albastru-rosu, cu urma estompata in afara zonei aprinse
+      auto draw_ring = [&](float vmin, float vmax, float lo, float hi, float mk, float cu, Color col, int gm) {
+        auto ang = [&](float v) -> float {
+          if (v < vmin) v = vmin;
+          if (v > vmax) v = vmax;
+          return (135.0f + (v - vmin) / (vmax - vmin) * 270.0f) * 0.0174533f;
+        };
+        // urma (fundalul inelului)
+        for (float d = 0.0f; d <= 270.0f; d += 1.5f) {
+          float a = (135.0f + d) * 0.0174533f;
+          Color tr = (gm == 3) ? mixc(tcol(d / 270.0f), Color(0x000000), 0.78f) : Color(0x2A2A2A);
+          it.filled_circle(120 + (int) (107.0f * cosf(a)), 120 + (int) (107.0f * sinf(a)), 5, tr);
+        }
+        // partea aprinsa
+        if (!std::isnan(lo) && !std::isnan(hi) && hi > lo) {
+          float d0 = (lo - vmin) / (vmax - vmin) * 270.0f;
+          float d1 = (hi - vmin) / (vmax - vmin) * 270.0f;
+          if (d0 < 0.0f) d0 = 0.0f;
+          if (d1 > 270.0f) d1 = 270.0f;
+          for (float d = d0; d <= d1; d += 1.5f) {
+            float a = (135.0f + d) * 0.0174533f;
+            float frac = d / 270.0f;
+            Color c = col;
+            if (gm == 1) c = mixc(mixc(col, Color(0xFFFFFF), 0.55f), mixc(col, Color(0x000000), 0.25f), frac);
+            else if (gm >= 2) c = tcol(frac);
+            it.filled_circle(120 + (int) (107.0f * cosf(a)), 120 + (int) (107.0f * sinf(a)), 5, c);
+          }
+        }
+        if (!std::isnan(cu)) {
+          float a = ang(cu);
+          float cf = (cu - vmin) / (vmax - vmin);
+          it.filled_circle(120 + (int) (90 * cosf(a)), 120 + (int) (90 * sinf(a)), 3, (gm >= 2) ? tcol(cf) : col);
+        }
+        if (!std::isnan(mk)) {
+          float a = ang(mk);
+          it.filled_circle(120 + (int) (107 * cosf(a)), 120 + (int) (107 * sinf(a)), 7, Color::WHITE);
+        }
+      };
+      char buf[48];
+      float bat = id(battery_percentage)->state;
+      int np = (int) id(num_pages)->state;
+      if (np < 1) np = 1;
+      if (np > 8) np = 8;
+      // cardurile principale: primul slot de fiecare fel (lumina, clima, muzica); restul merg pe paginile "Mai multe"
+      int m1 = -1, m2 = -1, m3 = -1, m4 = -1;
+      for (int i = 0; i < np; i++) {
+        int k = *a_kd[i];
+        if (k == 1 && m1 < 0) m1 = i;
+        if (k == 2 && m2 < 0) m2 = i;
+        if (k == 3 && m3 < 0) m3 = i;
+        if (k == 4 && m4 < 0) m4 = i;
+      }
+      if (m2 < 0) m2 = m4;
+      int rest[8];
+      int nr = 0;
+      for (int i = 0; i < np; i++) {
+        if (i != m1 && i != m2 && i != m3) rest[nr++] = i;
+      }
+      int nmore = (nr + 3) / 4;
+      // ordinea paginilor: Carduri, Mai multe, Favorite, Alarma, Diagnostic
+      int pi = 1, pmore = -1, pfav = -1, palm = -1, pdiag = -1;
+      if (nmore > 0) { pmore = pi; pi += nmore; }
+      if (id(fav_on)->state) pfav = pi++;
+      if (id(alarm_pg)->state) palm = pi++;
+      if (id(diag_pg)->state) pdiag = pi++;
+      int np2 = pi;
+      int ds = id(det_slot);
+      if (ds >= np) ds = -1;
+      id(diag_vis) = false;
+      bool fl = ((uint32_t) (millis() - id(flash_ms))) < 350;
+      int fop = id(flash_op);
+
+      if (id(alarm_ringing)) {
+        // ---------- ALARMA SUNA: ora mare, Amana / Stop ----------
+        int fr = id(va_frame);
+        auto now = id(ha_time)->now(); if (!now.is_valid()) now = id(sntp_time)->now();
+        if (now.is_valid()) snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
+        else snprintf(buf, sizeof(buf), "--:--");
+        int pr = 110 + ((fr / 3) % 2) * 3;
+        it.circle(120, 120, pr, accent);
+        it.circle(120, 120, pr - 1, accent);
+        it.printf(120, 40, id(font_art), accent, TextAlign::CENTER, "%s", id(alarm_ramp) ? "Trezire lina" : "Alarma");
+        if (id(alarm_ramp)) {
+          // bara de trezire: cat de sus a ajuns nivelul de lumina / sunet
+          it.filled_rectangle(60, 60, 120, 5, Color(0x333333));
+          it.filled_rectangle(60, 60, 120 * id(alarm_lvl) / 100, 5, accent);
+        }
+        it.printf(120, 98, id(font_clock), Color::WHITE, TextAlign::CENTER, "%s", buf);
+        // amana
+        it.filled_circle(76, 170, 36, Color(0x3A3A3A));
+        it.printf(76, 164, id(font_label), Color::WHITE, TextAlign::CENTER, "Amana");
+        snprintf(buf, sizeof(buf), "%d min", (int) id(alarm_snooze_min)->state);
+        it.printf(76, 182, id(font_label), Color(0xAAAAAA), TextAlign::CENTER, "%s", buf);
+        // stop
+        it.filled_circle(164, 170, 36, Color(0xE53935));
+        it.printf(164, 170, id(font_art), Color::WHITE, TextAlign::CENTER, "Stop");
+      } else if (id(door_show)) {
+        // ---------- SONERIE: poza de la camera + Deschide / Ignora ----------
+        if (id(door_ok)) {
+          int dw = id(door_img)->get_width();
+          int dh = id(door_img)->get_height();
+          it.image((240 - dw) / 2, (240 - dh) / 2, id(door_img));
+          dim_rows(18, 62, 1);
+          dim_rows(158, 228, 1);
+        } else {
+          it.filled_rectangle(0, 0, 240, 240, Color(0x1D2A36));
+          it.printf(120, 112, id(font_label), Color(0x9A9AA3), TextAlign::CENTER, "Se incarca poza...");
+        }
+        it.printf(120, 44, id(font_art), Color::WHITE, TextAlign::CENTER, "Sonerie");
+        it.filled_circle(78, 192, 30, (fl && fop == 60) ? Color::WHITE : Color(0x22C55E));
+        it.printf(78, 192, id(font_label), Color::BLACK, TextAlign::CENTER, "Deschide");
+        it.filled_circle(162, 192, 30, (fl && fop == 61) ? Color::WHITE : Color(0x3A3A42));
+        it.printf(162, 192, id(font_label), (fl && fop == 61) ? Color::BLACK : Color::WHITE, TextAlign::CENTER, "Ignora");
+      } else if (id(va_phase) > 0) {
+        // ---------- ASISTENT VOCAL: HUD stil Jarvis ----------
+        int ph = id(va_phase);
+        int fr = id(va_frame);
+        Color c_main = Color(0x00D8FF);
+        Color c_dim = Color(0x0B3D52);
+        Color c_hi = Color(0xA8F0FF);
+        if (ph == 3) c_main = Color(0x5CFFB0);
+        if (ph == 4) c_main = Color(0xFF5252);
+        float spd = (ph == 2) ? 14.0f : ((ph == 4) ? 0.0f : 6.0f);
+        float rot = fr * spd;
+        // inel exterior fin
+        it.circle(120, 120, 115, c_dim);
+        // trei arce groase care se rotesc
+        for (int sg = 0; sg < 3; sg++) {
+          float a0 = rot + sg * 120.0f;
+          for (float d = 0.0f; d < 70.0f; d += 2.0f) {
+            float a = (a0 + d) * 0.0174533f;
+            it.filled_circle(120 + (int) (108.0f * cosf(a)), 120 + (int) (108.0f * sinf(a)), 2, c_main);
+          }
+        }
+        // inel cu repere care se roteste invers
+        for (int k = 0; k < 36; k++) {
+          float a = (k * 10.0f - rot * 0.7f) * 0.0174533f;
+          bool bg = (k % 6 == 0);
+          int r1 = bg ? 90 : 95;
+          int x1 = 120 + (int) (r1 * cosf(a));
+          int y1 = 120 + (int) (r1 * sinf(a));
+          int x2 = 120 + (int) (101.0f * cosf(a));
+          int y2 = 120 + (int) (101.0f * sinf(a));
+          it.line(x1, y1, x2, y2, bg ? c_hi : c_dim);
+        }
+        // inel interior care "respira"
+        int br = 86 + (int) (3.0f * sinf(fr * 0.5f));
+        it.circle(120, 120, br, c_main);
+        it.circle(120, 120, br - 1, c_dim);
+        const char *ptxt = (ph == 1) ? "Ascult" : ((ph == 2) ? "Ma gandesc" : ((ph == 3) ? "Raspund" : "Eroare"));
+        std::string txt = (ph == 3) ? id(ts_resp)->state : id(ts_req)->state;
+        if (txt.empty()) {
+          // nucleu care pulseaza
+          int cr = 14 + (int) (6.0f * sinf(fr * 0.6f));
+          it.filled_circle(120, 108, cr + 9, c_dim);
+          it.filled_circle(120, 108, cr, c_main);
+          it.printf(120, 162, id(font_value), c_main, TextAlign::CENTER, "%s", ptxt);
+        } else {
+          it.printf(120, 74, id(font_art), c_main, TextAlign::CENTER, "%s", ptxt);
+          std::string l1 = utf8_take(txt, 0, 22);
+          std::string l2 = utf8_take(txt, l1.size(), 22);
+          std::string l3 = utf8_take(txt, l1.size() + l2.size(), 22);
+          it.printf(120, 108, id(font_label), Color(0xDDF6FF), TextAlign::CENTER, "%s", l1.c_str());
+          it.printf(120, 128, id(font_label), Color(0xDDF6FF), TextAlign::CENTER, "%s", l2.c_str());
+          it.printf(120, 148, id(font_label), Color(0xDDF6FF), TextAlign::CENTER, "%s", l3.c_str());
+        }
+      } else if (id(fade_active) && id(view) == 0) {
+        // ---------- SLEEP: volumul scade lin; atingi ca sa anulezi ----------
+        float fs = id(num_fade)->state;
+        float prog = (fs > 0.0f) ? ((float) (millis() - id(fade_ms)) / (fs * 1000.0f)) : 1.0f;
+        if (prog < 0.0f) prog = 0.0f;
+        if (prog > 1.0f) prog = 1.0f;
+        it.filled_circle(120, 44, 14, Color::WHITE);
+        it.filled_circle(126, 39, 12, Color::BLACK);
+        it.printf(120, 78, id(font_art), Color::WHITE, TextAlign::CENTER, "Sleep");
+        snprintf(buf, sizeof(buf), "oprire in %d s", id(sleep_left));
+        it.printf(120, 100, id(font_label), accent, TextAlign::CENTER, "%s", buf);
+        it.line(40, 176, 200, 176, Color(0x444444));
+        for (int xx = 40; xx <= 200; xx += 2) {
+          float tt = (xx - 40) / 160.0f;
+          int yy = 120 + (int) (56.0f * tt * tt * (3.0f - 2.0f * tt));
+          it.filled_circle(xx, yy, 1, (xx - 40) / 160.0f <= prog ? accent : Color(0x555555));
+        }
+        {
+          float tt = prog;
+          int yy = 120 + (int) (56.0f * tt * tt * (3.0f - 2.0f * tt));
+          it.filled_circle(40 + (int) (160.0f * prog), yy, 5, Color::WHITE);
+        }
+        it.printf(40, 190, id(font_label), Color(0x9A9AA3), TextAlign::CENTER_LEFT, "acum");
+        it.printf(200, 190, id(font_label), Color(0x9A9AA3), TextAlign::CENTER_RIGHT, "oprit");
+        it.printf(120, 216, id(font_label), Color(0x777777), TextAlign::CENTER, "atinge = anuleaza");
+      } else if (id(view) == 0) {
+        int s = id(page);
+        if (s < 0 || s >= np2) s = 0;
+        bool cardp = (s == 0);
+        bool morep = (pmore >= 0 && s >= pmore && s < pmore + nmore);
+        bool favp = (s == pfav);
+        bool alp = (s == palm);
+        bool diagp = (s == pdiag);
+        // valoarea unui slot, pentru carduri
+        auto slot_val = [&](int sl, char *out, size_t n, Color &col, bool &small) {
+          small = false;
+          int k = *a_kd[sl];
+          bool o = is_on(sl);
+          col = Color(0x777777);
+          if (k == 1) {
+            float b = a_br[sl]->state;
+            if (o) snprintf(out, n, "%d%%", std::isnan(b) ? 100 : (int) roundf(b * 100.0f / 255.0f));
+            else snprintf(out, n, "Oprit");
+            if (o) col = Color(0xFFD54F);
+          } else if (k == 2) {
+            float c2 = a_cu[sl]->state;
+            if (std::isnan(c2)) snprintf(out, n, "--");
+            else {
+              snprintf(out, n, "%.1f°", c2);
+              col = tcol((c2 - 16.0f) / 14.0f);
+            }
+          } else if (k == 3) {
+            std::string tt = a_ti[sl]->state;
+            size_t bp = tt.find('|');
+            std::string nm3 = (bp != std::string::npos) ? tt.substr(bp + 1) : tt;
+            bool pl = (a_st[sl]->state == "playing" || a_st[sl]->state == "buffering");
+            if (nm3.empty()) nm3 = pl ? "Se reda" : "Oprit";
+            snprintf(out, n, "%s", utf8_take(nm3, 0, 11).c_str());
+            small = true;
+            if (pl) col = accent;
+          } else if (k == 4) {
+            fmt_val(a_st[sl]->state, out, n);
+            col = Color(0x35D0FF);
+          } else {
+            snprintf(out, n, "%s", o ? "Pornit" : "Oprit");
+            if (o) col = Color(0x4ADE80);
+          }
+        };
+        // bara cu degrade (fata de valoarea frac 0..1); temp = scara albastru-rosu, altfel galben deschis -> portocaliu
+        auto grad_bar = [&](int x0, int y0, int w, int h, float frac, bool temp) {
+          for (int i = 0; i < w; i++) {
+            float f = (float) i / (float) (w - 1);
+            Color c = temp ? tcol(f) : mixc(Color(0xFFF3B0), Color(0xFF9800), f);
+            if (f > frac) c = mixc(c, Color(0x000000), 0.82f);
+            it.filled_rectangle(x0 + i, y0, 1, h, c);
+          }
+          it.filled_circle(x0, y0 + h / 2, h / 2, temp ? tcol(0.0f) : Color(0xFFF3B0));
+          it.filled_circle(x0 + w - 1, y0 + h / 2, h / 2, mixc(temp ? tcol(1.0f) : Color(0xFF9800), Color(0x000000), frac >= 1.0f ? 0.0f : 0.82f));
+        };
+        if (ds >= 0) {
+          // ---------- DETALIU: ecran curat pentru un singur slot ----------
+          int s2 = ds;
+          int ic = *a_ic[s2];
+          if (ic < 0 || ic > 11) ic = 0;
+          int kind = *a_kd[s2];
+          bool on = is_on(s2);
+          bool art_bg = false;
+          if (kind == 3 && id(art_bg_on)->state && id(art_ok)) {
+            int aw = id(art_img)->get_width();
+            int ah = id(art_img)->get_height();
+            it.image((240 - aw) / 2, (240 - ah) / 2, id(art_img));
+            dim_rows(0, 40, 1);
+            dim_rows(40, 96, 2);
+            dim_rows(96, 150, 1);
+            dim_rows(150, 172, 2);
+            dim_rows(172, 240, 1);
+            art_bg = true;
+          }
+          it.printf(120, 24, id(font_label), (kind == 3 && art_bg) ? Color(0xDDDDDD) : Color(0x9A9AA3), TextAlign::CENTER, "< %s", a_nm[s2]->c_str());
+          if (kind == 3) {
+            // ----- MUZICA -----
+            std::string st = a_st[s2]->state;
+            std::string ttl = a_ti[s2]->state;
+            std::string artist = "";
+            std::string title = "";
+            size_t bar = ttl.find('|');
+            if (bar != std::string::npos) {
+              artist = ttl.substr(0, bar);
+              title = ttl.substr(bar + 1);
+            } else {
+              title = ttl;
+            }
+            if (artist.empty() && title.empty()) {
+              title = (st == "playing") ? "Se reda" : ((st == "paused") ? "Pauza" : "Oprit");
+            }
+            bool playing = (st == "playing" || st == "buffering");
+            if (!artist.empty()) {
+              it.printf(120, 54, id(font_art), Color::WHITE, TextAlign::CENTER, "%s", utf8_take(artist, 0, 24).c_str());
+            }
+            it.printf(120, 78, id(font_label), art_bg ? Color(0xEEEEEE) : Color(0xCCCCCC), TextAlign::CENTER, "%s", utf8_take(title, 0, 30).c_str());
+            it.filled_circle(72, 122, 17, (fl && fop == 3) ? accent : Color(0x3A3A3A));
+            it.filled_rectangle(65, 115, 2, 14, Color::WHITE);
+            tri_l(73, 122, 12, Color::WHITE);
+            it.filled_circle(120, 122, 26, (fl && (fop == 4 || fop == 0)) ? Color::WHITE : accent);
+            if (playing) {
+              it.filled_rectangle(112, 111, 7, 22, Color::BLACK);
+              it.filled_rectangle(122, 111, 7, 22, Color::BLACK);
+            } else {
+              tri_r(122, 122, 22, Color::BLACK);
+            }
+            it.filled_circle(168, 122, 17, (fl && fop == 5) ? accent : Color(0x3A3A3A));
+            tri_r(166, 122, 12, Color::WHITE);
+            it.filled_rectangle(173, 115, 2, 14, Color::WHITE);
+            float pos = a_po[s2]->state;
+            float dur = a_du[s2]->state;
+            if (!std::isnan(pos)) {
+              if (playing) pos += (float) (millis() - id(last_push_ms)) / 1000.0f;
+              if (!std::isnan(dur) && pos > dur) pos = dur;
+              int p = (int) pos;
+              if (!std::isnan(dur)) {
+                int d = (int) dur;
+                snprintf(buf, sizeof(buf), "%02d:%02d | %02d:%02d", p / 60, p % 60, d / 60, d % 60);
+              } else {
+                snprintf(buf, sizeof(buf), "%02d:%02d", p / 60, p % 60);
+              }
+              it.printf(120, 158, id(font_label), art_bg ? Color(0xEEEEEE) : Color(0xBBBBBB), TextAlign::CENTER, "%s", buf);
+            }
+            // bara de volum (atingi ca sa setezi)
+            float vol = a_vo[s2]->state;
+            it.filled_rectangle(70, 184, 90, 8, art_bg ? Color(0x222222) : Color(0x2A2A2A));
+            it.filled_circle(70, 188, 4, art_bg ? Color(0x222222) : Color(0x2A2A2A));
+            it.filled_circle(159, 188, 4, art_bg ? Color(0x222222) : Color(0x2A2A2A));
+            if (!std::isnan(vol) && vol > 0.0f) {
+              int fw = (int) (90.0f * vol);
+              it.filled_rectangle(70, 184, fw, 8, accent);
+              it.filled_circle(70, 188, 4, accent);
+              it.filled_circle(70 + fw, 188, 4, accent);
+            }
+            // sleep timer: luna + minutele ramase
+            int sl = id(sleep_left);
+            bool slon = sl > 0;
+            Color sc = slon ? accent : Color(0x777777);
+            if (art_bg) it.filled_circle(186, 188, 16, Color::BLACK);
+            it.filled_circle(186, 186, 11, sc);
+            it.filled_circle(191, 182, 10, art_bg ? Color::BLACK : Color(0x000000));
+            if (slon) {
+              snprintf(buf, sizeof(buf), "%dm", (sl + 59) / 60);
+              it.printf(186, 204, id(font_label), sc, TextAlign::CENTER, "%s", buf);
+            }
+          } else if (kind == 4) {
+            // ----- SENZOR -----
+            std::string raw = a_st[s2]->state;
+            std::string unit = a_ti[s2]->state;
+            char *endp = nullptr;
+            float val = strtof(raw.c_str(), &endp);
+            bool okv = !(raw.empty() || endp == raw.c_str());
+            bool is_temp = (unit.find("°") != std::string::npos);
+            float vmin = a_mn[s2]->state;
+            float vmax = a_mx[s2]->state;
+            if (std::isnan(vmin) || std::isnan(vmax) || !(vmax > vmin)) {
+              vmin = 0.0f;
+              vmax = 100.0f;
+            }
+            float frac = okv ? (val - vmin) / (vmax - vmin) : 0.0f;
+            if (frac < 0.0f) frac = 0.0f;
+            if (frac > 1.0f) frac = 1.0f;
+            fmt_val(raw, buf, sizeof(buf));
+            it.printf(120, 62, id(font_mdi), icon_color(ic, on), TextAlign::CENTER, "%s", ICONS[ic]);
+            it.printf(120, 118, id(font_dial), Color::WHITE, TextAlign::CENTER, "%s", buf);
+            if (!unit.empty()) it.printf(120, 154, id(font_value), (is_temp && okv) ? tcol(frac) : accent, TextAlign::CENTER, "%s", unit.c_str());
+            grad_bar(50, 176, 140, 10, okv ? frac : 0.0f, is_temp);
+            snprintf(buf, sizeof(buf), (fabsf(vmin - roundf(vmin)) < 0.05f) ? "%.0f" : "%.1f", vmin);
+            it.printf(50, 200, id(font_label), Color(0x888888), TextAlign::CENTER_LEFT, "%s", buf);
+            snprintf(buf, sizeof(buf), (fabsf(vmax - roundf(vmax)) < 0.05f) ? "%.0f" : "%.1f", vmax);
+            it.printf(190, 200, id(font_label), Color(0x888888), TextAlign::CENTER_RIGHT, "%s", buf);
+          } else if (kind == 0) {
+            // ----- PORNIT-OPRIT -----
+            it.filled_circle(120, 112, 70, icon_bg(ic, on));
+            if (on) it.circle(120, 112, 71, icon_color(ic, true));
+            if (fl && fop == 0) {
+              it.circle(120, 112, 73, Color::WHITE);
+              it.circle(120, 112, 74, Color::WHITE);
+            }
+            it.printf(120, 112, id(font_mdi_big), icon_color(ic, on), TextAlign::CENTER, "%s", ICONS[ic]);
+            it.printf(120, 196, id(font_art), on ? accent : Color(0x999999), TextAlign::CENTER, "%s", on ? "Pornit" : "Oprit");
+          } else {
+            // ----- LUMINA (kind 1) si CLIMA (kind 2): valoare mare, bara cu degrade, minus / pornit-oprit / plus -----
+            if (kind == 1) {
+              float b = a_br[s2]->state;
+              float pct = on ? (std::isnan(b) ? 100.0f : roundf(b * 100.0f / 255.0f)) : 0.0f;
+              it.printf(120, 62, id(font_mdi), icon_color(ic, on), TextAlign::CENTER, "%s", ICONS[ic]);
+              snprintf(buf, sizeof(buf), "%d%%", (int) pct);
+              it.printf(120, 114, id(font_dial), on ? Color::WHITE : Color(0x777777), TextAlign::CENTER, "%s", buf);
+              grad_bar(40, 140, 160, 12, pct / 100.0f, false);
+            } else {
+              std::string st = a_st[s2]->state;
+              float tgt = a_tg[s2]->state;
+              float cur = a_cu[s2]->state;
+              Color mc = Color(0x777777);
+              const char *mtxt = "Oprit";
+              if (st == "heat") { mc = Color(0xFF7043); mtxt = "Incalzire"; }
+              else if (st == "cool") { mc = Color(0x42A5F5); mtxt = "Racire"; }
+              else if (st == "auto" || st == "heat_cool") { mc = Color(0x66BB6A); mtxt = "Auto"; }
+              else if (st == "dry") { mc = Color(0xFFCA28); mtxt = "Uscare"; }
+              else if (st == "fan_only") { mc = Color(0x90A4AE); mtxt = "Ventilator"; }
+              bool active = (mtxt[0] != 'O');
+              it.printf(120, 56, id(font_label), mc, TextAlign::CENTER, "%s", mtxt);
+              if (std::isnan(tgt)) snprintf(buf, sizeof(buf), "--");
+              else snprintf(buf, sizeof(buf), "%.1f", tgt);
+              it.printf(120, 98, id(font_dial), active ? Color::WHITE : Color(0x888888), TextAlign::CENTER, "%s", buf);
+              if (std::isnan(cur)) snprintf(buf, sizeof(buf), "Acum --");
+              else snprintf(buf, sizeof(buf), "Acum %.1f°C", cur);
+              it.printf(120, 132, id(font_label), Color(0xBBBBBB), TextAlign::CENTER, "%s", buf);
+              float fr = std::isnan(tgt) ? 0.0f : (tgt - 16.0f) / 14.0f;
+              if (fr < 0.0f) fr = 0.0f;
+              if (fr > 1.0f) fr = 1.0f;
+              grad_bar(50, 148, 140, 10, active ? fr : 0.0f, true);
+            }
+            bool ok_on = on || (kind == 2 && a_st[s2]->state != "off");
+            it.filled_circle(64, 188, 22, (fl && fop == 2) ? accent : Color(0x2A2A2A));
+            it.printf(64, 188, id(font_value), Color::WHITE, TextAlign::CENTER, "-");
+            it.filled_circle(176, 188, 22, (fl && fop == 1) ? accent : Color(0x2A2A2A));
+            it.printf(176, 188, id(font_value), Color::WHITE, TextAlign::CENTER, "+");
+            it.filled_circle(120, 188, 22, (fl && fop == 0) ? Color::WHITE : (ok_on ? accent_bg : Color(0x2A2A2A)));
+            it.circle(120, 188, 10, ok_on ? accent : Color(0x999999));
+            it.filled_rectangle(119, 176, 3, 12, (fl && fop == 0) ? Color::WHITE : (ok_on ? accent_bg : Color(0x2A2A2A)));
+            it.filled_rectangle(119, 177, 3, 11, ok_on ? accent : Color(0x999999));
+          }
+        } else if (favp) {
+          // ---------- PAGINA FAVORITE: 3 radiouri + 1 playlist (Music Assistant) ----------
+          it.printf(120, 30, id(font_label), Color::WHITE, TextAlign::CENTER, "Favorite");
+          text::Text *a_fn[4] = {id(fav_n1), id(fav_n2), id(fav_n3), id(fav_n4)};
+          text::Text *a_fc[4] = {id(fav_c1), id(fav_c2), id(fav_c3), id(fav_c4)};
+          int *a_ft[4] = {&id(fav_ty1), &id(fav_ty2), &id(fav_ty3), &id(fav_ty4)};
+          static const char *FTL[5] = {"RADIO", "LISTA", "ALBUM", "PIESA", "ARTIST"};
+          const int fx[4] = {74, 166, 74, 166};
+          const int fy[4] = {90, 90, 170, 170};
+          for (int i = 0; i < 4; i++) {
+            int t = *a_ft[i];
+            if (t < 0 || t > 4) t = 0;
+            bool isset = !a_fc[i]->state.empty();
+            bool hit = fl && fop == 10 + i;
+            bool pl = (t == 1);
+            Color rc = pl ? Color(0xAB47BC) : Color(0x42A5F5);
+            Color bgc = pl ? Color(0x2A1736) : Color(0x0F2A44);
+            it.filled_circle(fx[i], fy[i], 38, hit ? accent : (isset ? bgc : grey_bg));
+            if (isset) it.circle(fx[i], fy[i], 39, rc);
+            std::string nm = utf8_take(a_fn[i]->state, 0, 10);
+            it.printf(fx[i], fy[i] - 6, id(font_label), hit ? Color::BLACK : (isset ? Color::WHITE : Color(0x777777)), TextAlign::CENTER, "%s", nm.c_str());
+            it.printf(fx[i], fy[i] + 12, id(font_label), hit ? Color::BLACK : Color(0x999999), TextAlign::CENTER, "%s", FTL[t]);
+          }
+        } else if (alp) {
+          // ---------- PAGINA ALARMA: seteaza ora, pornit / oprit ----------
+          bool aon = id(alarm_on)->state;
+          bool awd = id(alarm_wd)->state;
+          int ah = (int) id(alarm_h)->state;
+          int am = (int) id(alarm_min)->state;
+          Color tc = aon ? accent : Color(0x777777);
+          it.printf(120, 30, id(font_label), Color::WHITE, TextAlign::CENTER, "%s", awd ? "Alarma  L-V" : "Alarma  zilnic");
+          snprintf(buf, sizeof(buf), "%02d:%02d", ah, am);
+          it.printf(120, 92, id(font_clock), tc, TextAlign::CENTER, "%s", buf);
+          // ora + / -
+          it.filled_circle(60, 146, 18, (fl && fop == 40) ? accent : Color(0x333333));
+          it.filled_circle(60, 184, 18, (fl && fop == 41) ? accent : Color(0x333333));
+          it.printf(60, 146, id(font_value), Color::WHITE, TextAlign::CENTER, "+");
+          it.printf(60, 184, id(font_value), Color::WHITE, TextAlign::CENTER, "-");
+          // minut + / -
+          it.filled_circle(180, 146, 18, (fl && fop == 42) ? accent : Color(0x333333));
+          it.filled_circle(180, 184, 18, (fl && fop == 43) ? accent : Color(0x333333));
+          it.printf(180, 146, id(font_value), Color::WHITE, TextAlign::CENTER, "+");
+          it.printf(180, 184, id(font_value), Color::WHITE, TextAlign::CENTER, "-");
+          // pornit / oprit
+          it.filled_circle(120, 166, 28, aon ? accent_bg : grey_bg);
+          it.circle(120, 166, 29, aon ? accent : Color(0x555555));
+          if (fl && fop == 44) {
+            it.circle(120, 166, 31, Color::WHITE);
+            it.circle(120, 166, 32, Color::WHITE);
+          }
+          it.printf(120, 166, id(font_art), aon ? accent : Color(0x999999), TextAlign::CENTER, "%s", aon ? "ON" : "OFF");
+        } else if (cardp || morep) {
+          // ---------- CARDURI: pagina de start (lumina, clima, muzica, alarma + volum) sau "Mai multe" ----------
+          auto rrect = [&](int x, int y, int w, int h, int r, Color c) {
+            it.filled_rectangle(x + r, y, w - 2 * r, h, c);
+            it.filled_rectangle(x, y + r, w, h - 2 * r, c);
+            it.filled_circle(x + r, y + r, r, c);
+            it.filled_circle(x + w - r - 1, y + r, r, c);
+            it.filled_circle(x + r, y + h - r - 1, r, c);
+            it.filled_circle(x + w - r - 1, y + h - r - 1, r, c);
+          };
+          Color card_bg = Color(0x17171C);
+          Color card_tx = Color(0x9A9AA3);
+          if (cardp) it.printf(120, 24, id(font_label), card_tx, TextAlign::CENTER, "${room_label}");
+          else it.printf(120, 24, id(font_label), card_tx, TextAlign::CENTER, "Mai multe");
+          const int cx0[4] = {40, 124, 40, 124};
+          const int cy0[4] = {42, 42, 110, 110};
+          for (int c = 0; c < 4; c++) {
+            int sl = -1;
+            bool alarm_cell = false;
+            if (cardp) {
+              if (c == 0) sl = m1;
+              else if (c == 1) sl = m2;
+              else if (c == 2) sl = m3;
+              else alarm_cell = true;
+            } else {
+              int j = (s - pmore) * 4 + c;
+              if (j < nr) sl = rest[j];
+              else continue;
+            }
+            rrect(cx0[c], cy0[c], 76, 60, 12, card_bg);
+            int mx = cx0[c] + 38;
+            if (alarm_cell) {
+              bool aon = id(alarm_on)->state;
+              snprintf(buf, sizeof(buf), "%02d:%02d", (int) id(alarm_h)->state, (int) id(alarm_min)->state);
+              it.printf(mx, cy0[c] + 22, id(font_art), aon ? Color(0x4ADE80) : Color(0x777777), TextAlign::CENTER, "%s", buf);
+              it.printf(mx, cy0[c] + 46, id(font_label), card_tx, TextAlign::CENTER, "Alarma");
+            } else if (sl >= 0) {
+              char vb[24];
+              Color vcol = Color(0x777777);
+              bool small = false;
+              slot_val(sl, vb, sizeof(vb), vcol, small);
+              it.printf(mx, cy0[c] + 22, small ? id(font_label) : id(font_art), vcol, TextAlign::CENTER, "%s", vb);
+              it.printf(mx, cy0[c] + 46, id(font_label), card_tx, TextAlign::CENTER, "%s", utf8_take(*a_nm[sl], 0, 10).c_str());
+            } else {
+              it.printf(mx, cy0[c] + 22, id(font_art), Color(0x555555), TextAlign::CENTER, "--");
+            }
+          }
+          if (cardp) {
+            float mvol = (m3 >= 0) ? a_vo[m3]->state : NAN;
+            it.filled_rectangle(64, 184, 112, 8, Color(0x2A2A2A));
+            it.filled_circle(64, 188, 4, Color(0x2A2A2A));
+            it.filled_circle(175, 188, 4, Color(0x2A2A2A));
+            if (!std::isnan(mvol) && mvol > 0.0f) {
+              int fw = (int) (112.0f * mvol);
+              it.filled_rectangle(64, 184, fw, 8, accent);
+              it.filled_circle(64, 188, 4, accent);
+              it.filled_circle(64 + fw, 188, 4, accent);
+            }
+          }
+        } else if (diagp) {
+          // ---------- PAGINA DIAGNOSTIC ----------
+          id(diag_vis) = true;
+          it.printf(120, 30, id(font_label), accent, TextAlign::CENTER, "Diagnostic");
+          float rs = id(wifi_sig)->state;
+          bool hok = id(api_up);
+          auto t1 = id(ha_time)->now();
+          auto t2 = id(sntp_time)->now();
+          const char *tsrc = t1.is_valid() ? "HA" : (t2.is_valid() ? "internet" : "fara ora");
+          uint32_t age = (millis() - id(last_push_ms)) / 1000;
+          uint32_t up = millis() / 1000;
+          const char *lab[6] = {"Wi-Fi", "Home Assistant", "Stari", "Ora", "Baterie", "Uptime"};
+          char val[6][20];
+          Color vc[6];
+          if (std::isnan(rs)) snprintf(val[0], 20, "--");
+          else snprintf(val[0], 20, "%.0f dBm", rs);
+          vc[0] = std::isnan(rs) ? Color(0x777777) : (rs > -70 ? Color(0x4ADE80) : (rs > -80 ? Color(0xFFB300) : Color(0xE53935)));
+          snprintf(val[1], 20, "%s", hok ? "conectat" : "deconectat");
+          vc[1] = hok ? Color(0x4ADE80) : Color(0xE53935);
+          if (!hok || id(last_push_ms) == 0) snprintf(val[2], 20, "fara");
+          else snprintf(val[2], 20, "acum %u s", (unsigned) age);
+          vc[2] = (hok && id(last_push_ms) != 0 && age < 15) ? Color(0x4ADE80) : Color(0xFFB300);
+          snprintf(val[3], 20, "%s", tsrc);
+          vc[3] = t1.is_valid() ? Color(0x4ADE80) : (t2.is_valid() ? Color(0xFFB300) : Color(0xE53935));
+          if (std::isnan(bat)) snprintf(val[4], 20, "--");
+          else snprintf(val[4], 20, "%d%%", (int) roundf(bat));
+          vc[4] = (std::isnan(bat) || bat >= 25) ? Color(0xCFCFD6) : Color(0xE53935);
+          snprintf(val[5], 20, "%ud %uh", (unsigned) (up / 86400), (unsigned) ((up % 86400) / 3600));
+          vc[5] = Color(0xCFCFD6);
+          for (int i = 0; i < 6; i++) {
+            int yy = 62 + i * 24;
+            it.printf(44, yy, id(font_label), Color(0x9A9AA3), TextAlign::CENTER_LEFT, "%s", lab[i]);
+            it.printf(196, yy, id(font_label), vc[i], TextAlign::CENTER_RIGHT, "%s", val[i]);
+            it.line(44, yy + 11, 196, yy + 11, Color(0x222222));
+          }
+          it.printf(120, 212, id(font_label), Color(0x666666), TextAlign::CENTER, "ESPHome %s", ESPHOME_VERSION);
+        }
+        // puncte de pagina: albe = ok, rosii = Home Assistant deconectat, galbene = nu vin stari
+        Color dot_on = Color::WHITE;
+        Color dot_off = Color(0x555555);
+        if (!id(api_up)) {
+          dot_on = Color(0xE53935);
+          dot_off = Color(0x6A2626);
+        } else if ((uint32_t) (millis() - id(last_push_ms)) > 15000) {
+          dot_on = Color(0xFFB300);
+          dot_off = Color(0x6A5200);
+        }
+        for (int p = 0; p < np2 && ds < 0; p++) {
+          int dxp = 120 + (p * 10) - ((np2 - 1) * 5);
+          it.filled_circle(dxp, 226, (p == s) ? 3 : 2, (p == s) ? dot_on : dot_off);
+        }
+        // avertisment baterie slaba
+        if (ds < 0 && !std::isnan(bat) && bat < 25) {
+          snprintf(buf, sizeof(buf), "%d%%", (int) roundf(bat));
+          it.printf(120, 211, id(font_label), Color(0xE53935), TextAlign::CENTER, "%s", buf);
+        }
+      } else {
+        // ---------- STANDBY: ceas analogic sau digital ----------
+        static const char *DAYS[7] = {"Duminica", "Luni", "Marti", "Miercuri", "Joi", "Vineri", "Sambata"};
+        static const char *DAYS3[7] = {"Dum", "Lun", "Mar", "Mie", "Joi", "Vin", "Sam"};
+        static const char *MONS[12] = {"Ian", "Feb", "Mar", "Apr", "Mai", "Iun", "Iul", "Aug", "Sep", "Oct", "Noi", "Dec"};
+        auto now = id(ha_time)->now(); if (!now.is_valid()) now = id(sntp_time)->now();
+        if (id(night_now)) {
+          // ----- NOAPTE: ceas digital foarte slab, ca sa nu lumineze camera -----
+          if (now.is_valid()) snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
+          else snprintf(buf, sizeof(buf), "--:--");
+          it.printf(120, 110, id(font_clock), Color(0x5A5A62), TextAlign::CENTER, "%s", buf);
+          it.printf(120, 148, id(font_label), Color(0x5A5A62), TextAlign::CENTER, "mod noapte");
+          if (id(alarm_on)->state) {
+            snprintf(buf, sizeof(buf), "Alarma %02d:%02d", (int) id(alarm_h)->state, (int) id(alarm_min)->state);
+            it.printf(120, 176, id(font_label), Color(0x45454C), TextAlign::CENTER, "%s", buf);
+          }
+        } else if (id(sb_style) == 0) {
+          // ----- ANALOG: cadran cu ace, temperatura, vreme si data -----
+          int hh = 12, mm = 0, ss = 0;
+          if (now.is_valid()) {
+            hh = now.hour;
+            mm = now.minute;
+            ss = now.second;
+          }
+          const float D2R = 0.0174533f;
+          // ac: unghi in grade de la ora 12, in sensul acelor de ceasornic
+          auto hand = [&](float ang_deg, int len, int w, Color c) {
+            float a = ang_deg * D2R;
+            float sx = sinf(a);
+            float cy_ = cosf(a);
+            int stp = (w > 1) ? 2 : 1;
+            for (int d = 0; d <= len; d += stp) {
+              it.filled_circle(120 + (int) (d * sx), 120 - (int) (d * cy_), w, c);
+            }
+          };
+          // repere: 60 de minute, cele de la 5 minute mai lungi si colorate; la 12/3/6/9 stau cifrele
+          for (int k = 0; k < 60; k++) {
+            if (k % 15 == 0) continue;
+            float a = k * 6.0f * D2R;
+            bool big = (k % 5 == 0);
+            int r1 = big ? 98 : 106;
+            int x1 = 120 + (int) (r1 * sinf(a));
+            int y1 = 120 - (int) (r1 * cosf(a));
+            int x2 = 120 + (int) (114.0f * sinf(a));
+            int y2 = 120 - (int) (114.0f * cosf(a));
+            it.line(x1, y1, x2, y2, big ? accent : Color(0x777777));
+          }
+          it.printf(120, 32, id(font_num), Color::WHITE, TextAlign::CENTER, "12");
+          it.printf(208, 120, id(font_num), Color::WHITE, TextAlign::CENTER, "3");
+          it.printf(120, 208, id(font_num), Color::WHITE, TextAlign::CENTER, "6");
+          it.printf(32, 120, id(font_num), Color::WHITE, TextAlign::CENTER, "9");
+          // temperatura de afara
+          float wt = id(wx_temp)->state;
+          if (std::isnan(wt)) snprintf(buf, sizeof(buf), "--");
+          else snprintf(buf, sizeof(buf), "%.0f", wt);
+          it.printf(78, 92, id(font_value), Color::WHITE, TextAlign::CENTER, "%s", buf);
+          it.printf(98, 84, id(font_label), Color::WHITE, TextAlign::CENTER_LEFT, "°C");
+          // pictograma de vreme dupa starea entitatii de vreme
+          std::string ws = id(wx_state)->state;
+          const char *wi = "";
+          if (ws == "sunny") wi = "\U000F0599";
+          else if (ws == "clear-night") wi = "\U000F0594";
+          else if (ws == "partlycloudy") wi = "\U000F0595";
+          else if (ws == "cloudy") wi = "\U000F0590";
+          else if (ws == "rainy") wi = "\U000F0597";
+          else if (ws == "pouring") wi = "\U000F0596";
+          else if (ws == "snowy") wi = "\U000F0598";
+          else if (ws == "snowy-rainy") wi = "\U000F067F";
+          else if (ws == "lightning") wi = "\U000F0593";
+          else if (ws == "lightning-rainy") wi = "\U000F067E";
+          else if (ws == "fog") wi = "\U000F0591";
+          else if (ws == "hail") wi = "\U000F0592";
+          else if (ws == "windy" || ws == "windy-variant") wi = "\U000F059D";
+          else if (ws == "exceptional") wi = "\U000F0590";
+          if (wi[0] != '\0') it.printf(162, 92, id(font_wx), accent, TextAlign::CENTER, "%s", wi);
+          // data, sub centru
+          if (now.is_valid()) {
+            it.printf(120, 140, id(font_art), Color::WHITE, TextAlign::CENTER, "%s", DAYS3[now.day_of_week - 1]);
+            snprintf(buf, sizeof(buf), "%02d %s", now.day_of_month, MONS[now.month - 1]);
+            it.printf(120, 162, id(font_art), Color::WHITE, TextAlign::CENTER, "%s", buf);
+          }
+          // jos: baterie slaba (rosu) sau ora alarmei, daca e pornita
+          if (!std::isnan(bat) && bat < 20) {
+            snprintf(buf, sizeof(buf), "%d%%", (int) roundf(bat));
+            it.printf(120, 182, id(font_label), Color(0xE53935), TextAlign::CENTER, "%s", buf);
+          } else if (id(alarm_on)->state) {
+            snprintf(buf, sizeof(buf), "Alarma %02d:%02d", (int) id(alarm_h)->state, (int) id(alarm_min)->state);
+            it.printf(120, 182, id(font_label), Color(0x999999), TextAlign::CENTER, "%s", buf);
+          }
+          // ace: ora, minutul, apoi secundarul (rosu) deasupra
+          float ha_deg = ((hh % 12) + mm / 60.0f) * 30.0f;
+          float ma_deg = (mm + ss / 60.0f) * 6.0f;
+          float sa_deg = ss * 6.0f;
+          hand(ha_deg, 52, 3, Color::WHITE);
+          hand(ma_deg, 84, 2, Color::WHITE);
+          hand(sa_deg, 94, 1, Color(0xFF3D3D));
+          hand(sa_deg + 180.0f, 22, 1, Color(0xFF3D3D));
+          it.filled_circle(120, 120, 5, Color(0xFF3D3D));
+        } else {
+          // ----- DIGITAL: ora mare, data, bateria -----
+          if (now.is_valid()) snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
+          else snprintf(buf, sizeof(buf), "--:--");
+          it.printf(120, 98, id(font_clock), Color::WHITE, TextAlign::CENTER, "%s", buf);
+          if (now.is_valid()) {
+            char dbuf[40];
+            snprintf(dbuf, sizeof(dbuf), "%s, %d %s", DAYS[now.day_of_week - 1], now.day_of_month, MONS[now.month - 1]);
+            it.printf(120, 148, id(font_date), accent, TextAlign::CENTER, "%s", dbuf);
+          }
+          if (!std::isnan(bat)) {
+            int bx = 85;
+            int by = 184;
+            it.rectangle(bx, by, 28, 14, Color(0xAAAAAA));
+            it.filled_rectangle(bx + 28, by + 4, 3, 6, Color(0xAAAAAA));
+            int fillw = (int) (24.0f * bat / 100.0f);
+            it.filled_rectangle(bx + 2, by + 2, fillw, 10, bat < 20 ? Color(0xE53935) : Color(0x66BB6A));
+            snprintf(buf, sizeof(buf), "%d%%", (int) roundf(bat));
+            it.printf(bx + 38, by + 7, id(font_label), Color(0xBBBBBB), TextAlign::CENTER_LEFT, "%s", buf);
+          }
+        }
+      }

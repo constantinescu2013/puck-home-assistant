@@ -1,0 +1,32 @@
+# === Automatizarea 1: cand suna soneria, Puck arata poza de la camera ===
+alias: Puck - sonerie pe ecran
+description: Face o poza de la camera soneriei si o trimite pe Puck
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.soneria_buton      # schimba cu butonul soneriei tale
+    to: "on"
+actions:
+  - action: camera.snapshot
+    target:
+      entity_id: camera.soneria                 # schimba cu camera soneriei tale
+    data:
+      filename: /config/www/doorbell.jpg
+  - delay: "00:00:01"
+  - action: esphome.puck_telecomanda_doorbell
+    data:
+      image_url: "/local/doorbell.jpg?t={{ as_timestamp(now()) | int }}"
+mode: single
+---
+# === Automatizarea 2: butonul Deschide de pe Puck ===
+alias: Puck - deschide usa
+description: Se executa cand apesi Deschide pe fereastra soneriei
+triggers:
+  - trigger: event
+    event_type: esphome.puck_door_open
+    event_data:
+      device: puck-telecomanda
+actions:
+  - action: switch.turn_on                      # schimba cu ce deschide usa ta (lacat, releu, buton)
+    target:
+      entity_id: switch.usa_intrare
+mode: single
