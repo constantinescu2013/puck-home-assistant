@@ -2,6 +2,10 @@
 
 # Puck – telecomandă Home Assistant (ESP32-S3, ecran rotund 1,28")
 
+[![Support via PayPal](https://img.shields.io/badge/Support-PayPal-blue?logo=paypal)](https://www.paypal.me/ccristian223)
+
+Cele trei STL-uri mari (corpul barei, corpul cutiei cu difuzor, corpul bazei pentru display) sunt la pagina [Releases](../../releases).
+
 Telecomandă cu ecran rotund tactil pentru Home Assistant, bazată pe ESPHome, cu asistent vocal (Jarvis), ceas, alarmă, control muzică (Music Assistant) și popup de sonerie cu poză de la cameră. În repo sunt și carcasele 3D imprimabile.
 
 ## Hardware
@@ -38,4 +42,4 @@ Telecomandă cu ecran rotund tactil pentru Home Assistant, bazată pe ESPHome, c
 
 ## Licență
 
-Alege una (de exemplu MIT pentru cod, CC BY 4.0 pentru modelele 3D) și adaugă fișierul `LICENSE`.
+Cod și configurări: MIT (vezi `LICENSE`). Modele 3D (STL): CC BY 4.0.
