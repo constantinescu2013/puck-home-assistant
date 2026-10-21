@@ -24,7 +24,7 @@ Telecomandă cu ecran rotund tactil pentru Home Assistant, bazată pe ESPHome, c
 |---|---|
 | `esphome/` | firmware-ul Puck (`puck-telecomanda.yaml`, `puck_slot.yaml`, `secrets.yaml.example`) |
 | `homeassistant/` | automatizări: sincronizarea stărilor și soneria |
-| `3d/` | carcase imprimabile: `bara-d1`, `cutia-c2`, `ecran-dsi-pi4` (STL + script Python parametric) |
+| `3d/` | carcase imprimabile: `bara-d1` |
 | `docs/` | `INSTALARE.md` – pas cu pas |
 
 ## Început rapid
